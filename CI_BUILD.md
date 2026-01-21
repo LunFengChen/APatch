@@ -41,6 +41,12 @@
   -PAUTO_INSTALL_MODULES="/sdcard/Download/module1.zip,/sdcard/Download/module2.zip"
 ```
 
+## 参数类型
+
+- `DEFAULT_SUPERKEY`: String (字符串)
+- `AUTO_INSTALL_APATCH`: Boolean (true/false)
+- `AUTO_INSTALL_MODULES`: String (逗号分隔的路径)
+
 ## 注意事项
 
 1. 模块路径必须是设备上的完整路径

@@ -10,8 +10,8 @@ on:
         type: string
       auto_install_apatch:
         description: '自动安装 AndroidPatch'
-        required: true
-        default: true
+        required: false
+        default: false
         type: boolean
       module_paths:
         description: '自动安装模块路径 (逗号分隔，如: /sdcard/Download/module1.zip,/sdcard/Download/module2.zip)'
