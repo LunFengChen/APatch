@@ -270,7 +270,15 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         // TODO: 2. remove all usage of superkey
         sharedPreferences = getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)
         APatchKeyHelper.setSharedPreferences(sharedPreferences)
-        superKey = APatchKeyHelper.readSPSuperKey()
+        
+        // Auto-set default superkey if not configured
+        var storedKey = APatchKeyHelper.readSPSuperKey()
+        if (storedKey.isEmpty()) {
+            storedKey = "xiaofeng777"
+            APatchKeyHelper.writeSPSuperKey(storedKey)
+            Log.d(TAG, "Auto-configured default superkey")
+        }
+        superKey = storedKey
 
         okhttpClient =
             OkHttpClient.Builder().cache(Cache(File(cacheDir, "okhttp"), 10 * 1024 * 1024))

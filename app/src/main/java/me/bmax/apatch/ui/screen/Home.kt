@@ -2,6 +2,7 @@ package me.bmax.apatch.ui.screen
 
 import android.os.Build
 import android.system.Os
+import android.util.Log
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -644,6 +645,14 @@ private fun KStatusCard(
 
 @Composable
 private fun AStatusCard(apState: APApplication.State) {
+    // Auto-install AndroidPatch when not installed
+    LaunchedEffect(apState) {
+        if (apState == APApplication.State.ANDROIDPATCH_NOT_INSTALLED) {
+            Log.d(TAG, "Auto-installing AndroidPatch...")
+            APApplication.installApatch()
+        }
+    }
+    
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = run {
             MaterialTheme.colorScheme.secondaryContainer
