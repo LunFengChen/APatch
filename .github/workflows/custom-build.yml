@@ -52,7 +52,7 @@ jobs:
       
       - name: Build APatch with Custom Config
         run: |
-          ./gradlew assembleRelease \
+          ./gradlew assembleDebug \
             -PDEFAULT_SUPERKEY="${{ inputs.superkey }}" \
             -PAUTO_INSTALL_APATCH="${{ inputs.auto_install_apatch }}" \
             -PAUTO_INSTALL_MODULES="${{ inputs.module_paths }}"
