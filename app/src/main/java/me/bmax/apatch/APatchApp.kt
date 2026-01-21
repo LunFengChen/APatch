@@ -171,6 +171,31 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
             _kpStateLiveData.postValue(State.KERNELPATCH_NEED_REBOOT)
             Log.d(TAG, "mark reboot ${result.code}")
         }
+        
+        private fun autoInstallModules(modulePaths: String) {
+            Log.d(TAG, "Auto-installing modules: $modulePaths")
+            
+            val paths = modulePaths.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            if (paths.isEmpty()) {
+                Log.d(TAG, "No modules to install")
+                return
+            }
+            
+            // Wait for APatch to be fully installed
+            Thread.sleep(2000)
+            
+            val shell = getRootShell()
+            for (path in paths) {
+                Log.d(TAG, "Installing module: $path")
+                val cmd = "$APD_LINK_PATH module install $path"
+                val result = shell.newJob().add(cmd).to(logCallback, logCallback).exec()
+                if (result.isSuccess) {
+                    Log.d(TAG, "Module installed successfully: $path")
+                } else {
+                    Log.e(TAG, "Failed to install module: $path")
+                }
+            }
+        }
 
 
         var superKey: String = ""
@@ -221,6 +246,13 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
 
                     if (Version.installedApdVInt > 0) {
                         _apStateLiveData.postValue(State.ANDROIDPATCH_INSTALLED)
+                        
+                        // Auto-install modules from BuildConfig
+                        if (BuildConfig.AUTO_INSTALL_MODULES.isNotEmpty()) {
+                            thread {
+                                autoInstallModules(BuildConfig.AUTO_INSTALL_MODULES)
+                            }
+                        }
                     }
 
                     if (Version.installedApdVInt > 0 && mgv.toInt() != Version.installedApdVInt) {
@@ -271,12 +303,12 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         sharedPreferences = getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)
         APatchKeyHelper.setSharedPreferences(sharedPreferences)
         
-        // Auto-set default superkey if not configured
+        // Auto-set default superkey if not configured (from BuildConfig)
         var storedKey = APatchKeyHelper.readSPSuperKey()
-        if (storedKey.isEmpty()) {
-            storedKey = "xiaofeng777"
+        if (storedKey.isEmpty() && BuildConfig.DEFAULT_SUPERKEY.isNotEmpty()) {
+            storedKey = BuildConfig.DEFAULT_SUPERKEY
             APatchKeyHelper.writeSPSuperKey(storedKey)
-            Log.d(TAG, "Auto-configured default superkey")
+            Log.d(TAG, "Auto-configured default superkey from BuildConfig")
         }
         superKey = storedKey
 

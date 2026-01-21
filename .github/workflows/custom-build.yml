@@ -1,0 +1,86 @@
+name: Custom APatch Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      superkey:
+        description: 'Default SuperKey (留空则需要手动输入)'
+        required: false
+        default: ''
+        type: string
+      auto_install_apatch:
+        description: '自动安装 AndroidPatch'
+        required: true
+        default: true
+        type: boolean
+      module_paths:
+        description: '自动安装模块路径 (逗号分隔，如: /sdcard/Download/module1.zip,/sdcard/Download/module2.zip)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: 'recursive'
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+      
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+      
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v3
+      
+      - name: Build APatch with Custom Config
+        run: |
+          ./gradlew assembleRelease \
+            -PDEFAULT_SUPERKEY="${{ inputs.superkey }}" \
+            -PAUTO_INSTALL_APATCH="${{ inputs.auto_install_apatch }}" \
+            -PAUTO_INSTALL_MODULES="${{ inputs.module_paths }}"
+      
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: APatch-Custom
+          path: app/build/outputs/apk/release/*.apk
+      
+      - name: Generate Build Info
+        run: |
+          echo "## Build Configuration" > build-info.txt
+          echo "" >> build-info.txt
+          echo "- **SuperKey**: ${{ inputs.superkey != '' && '已配置' || '未配置（需手动输入）' }}" >> build-info.txt
+          echo "- **自动安装 AndroidPatch**: ${{ inputs.auto_install_apatch }}" >> build-info.txt
+          echo "- **自动安装模块**: ${{ inputs.module_paths != '' && inputs.module_paths || '无' }}" >> build-info.txt
+          echo "" >> build-info.txt
+          echo "## 使用说明" >> build-info.txt
+          echo "" >> build-info.txt
+          echo "1. 刷入修补后的 boot.img" >> build-info.txt
+          echo "2. 安装此 APK" >> build-info.txt
+          echo "3. 打开应用，自动完成初始化" >> build-info.txt
+          
+          cat build-info.txt
+      
+      - name: Upload Build Info
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-info
+          path: build-info.txt

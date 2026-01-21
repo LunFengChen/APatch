@@ -69,6 +69,11 @@ android {
 
     defaultConfig {
         buildConfigField("String", "buildKPV", "\"$kernelPatchVersion\"")
+        
+        // Custom build configuration
+        buildConfigField("String", "DEFAULT_SUPERKEY", "\"${project.findProperty("DEFAULT_SUPERKEY") ?: ""}\"")
+        buildConfigField("boolean", "AUTO_INSTALL_APATCH", "${project.findProperty("AUTO_INSTALL_APATCH") ?: "true"}")
+        buildConfigField("String", "AUTO_INSTALL_MODULES", "\"${project.findProperty("AUTO_INSTALL_MODULES") ?: ""}\"")
 
         base.archivesName = "APatch_${managerVersionCode}_${managerVersionName}_${branchName}"
     }

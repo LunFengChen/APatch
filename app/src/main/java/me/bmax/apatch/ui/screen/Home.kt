@@ -645,9 +645,9 @@ private fun KStatusCard(
 
 @Composable
 private fun AStatusCard(apState: APApplication.State) {
-    // Auto-install AndroidPatch when not installed
+    // Auto-install AndroidPatch when not installed (controlled by BuildConfig)
     LaunchedEffect(apState) {
-        if (apState == APApplication.State.ANDROIDPATCH_NOT_INSTALLED) {
+        if (BuildConfig.AUTO_INSTALL_APATCH && apState == APApplication.State.ANDROIDPATCH_NOT_INSTALLED) {
             Log.d(TAG, "Auto-installing AndroidPatch...")
             APApplication.installApatch()
         }
