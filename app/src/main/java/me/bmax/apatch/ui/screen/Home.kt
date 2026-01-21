@@ -458,6 +458,13 @@ private fun TopBar(
 private fun KStatusCard(
     kpState: APApplication.State, apState: APApplication.State, navigator: DestinationsNavigator
 ) {
+    // Auto-try default superkey when state is UNKNOWN
+    LaunchedEffect(kpState) {
+        if (kpState == APApplication.State.UNKNOWN_STATE) {
+            Log.d(TAG, "Attempting to use default superkey...")
+            APApplication.tryDefaultSuperKey()
+        }
+    }
 
     val showAuthFailedTipDialog = remember { mutableStateOf(false) }
     if (showAuthFailedTipDialog.value) {

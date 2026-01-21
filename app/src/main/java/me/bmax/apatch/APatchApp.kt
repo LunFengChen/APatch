@@ -272,6 +272,24 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
                     return@thread
                 }
             }
+        
+        fun tryDefaultSuperKey(): Boolean {
+            if (BuildConfig.DEFAULT_SUPERKEY.isEmpty()) {
+                Log.d(TAG, "No default superkey configured")
+                return false
+            }
+            
+            Log.d(TAG, "Trying default superkey from BuildConfig")
+            val ready = Natives.nativeReady(BuildConfig.DEFAULT_SUPERKEY)
+            if (ready) {
+                Log.d(TAG, "Default superkey verified successfully")
+                superKey = BuildConfig.DEFAULT_SUPERKEY
+                return true
+            } else {
+                Log.d(TAG, "Default superkey verification failed")
+                return false
+            }
+        }
     }
 
     override fun onCreate() {
@@ -303,14 +321,18 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         sharedPreferences = getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)
         APatchKeyHelper.setSharedPreferences(sharedPreferences)
         
-        // Auto-set default superkey if not configured (from BuildConfig)
+        // Try stored key first, then default key from BuildConfig
         var storedKey = APatchKeyHelper.readSPSuperKey()
-        if (storedKey.isEmpty() && BuildConfig.DEFAULT_SUPERKEY.isNotEmpty()) {
-            storedKey = BuildConfig.DEFAULT_SUPERKEY
-            APatchKeyHelper.writeSPSuperKey(storedKey)
-            Log.d(TAG, "Auto-configured default superkey from BuildConfig")
+        if (storedKey.isNotEmpty()) {
+            Log.d(TAG, "Using stored superkey")
+            superKey = storedKey
+        } else if (tryDefaultSuperKey()) {
+            Log.d(TAG, "Using default superkey from BuildConfig")
+            // superKey already set in tryDefaultSuperKey()
+        } else {
+            Log.d(TAG, "No valid superkey, user input required")
+            // Will show auth dialog in UI
         }
-        superKey = storedKey
 
         okhttpClient =
             OkHttpClient.Builder().cache(Cache(File(cacheDir, "okhttp"), 10 * 1024 * 1024))
