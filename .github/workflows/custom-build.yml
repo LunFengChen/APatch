@@ -57,30 +57,19 @@ jobs:
             -PAUTO_INSTALL_APATCH="${{ inputs.auto_install_apatch }}" \
             -PAUTO_INSTALL_MODULES="${{ inputs.module_paths }}"
       
+      - name: Show Build Info
+        run: |
+          echo "## 🎯 Build Configuration"
+          echo ""
+          echo "- **SuperKey**: ${{ inputs.superkey != '' && '✅ 已配置' || '❌ 未配置（需手动输入）' }}"
+          echo "- **自动安装 AndroidPatch**: ${{ inputs.auto_install_apatch && '✅ 是' || '❌ 否' }}"
+          echo "- **自动安装模块**: ${{ inputs.module_paths != '' && inputs.module_paths || '无' }}"
+          echo ""
+          echo "## 📦 APK 信息"
+          ls -lh app/build/outputs/apk/debug/*.apk
+      
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: APatch-Custom
           path: app/build/outputs/apk/debug/*.apk
-      
-      - name: Generate Build Info
-        run: |
-          echo "## Build Configuration" > build-info.txt
-          echo "" >> build-info.txt
-          echo "- **SuperKey**: ${{ inputs.superkey != '' && '已配置' || '未配置（需手动输入）' }}" >> build-info.txt
-          echo "- **自动安装 AndroidPatch**: ${{ inputs.auto_install_apatch }}" >> build-info.txt
-          echo "- **自动安装模块**: ${{ inputs.module_paths != '' && inputs.module_paths || '无' }}" >> build-info.txt
-          echo "" >> build-info.txt
-          echo "## 使用说明" >> build-info.txt
-          echo "" >> build-info.txt
-          echo "1. 刷入修补后的 boot.img" >> build-info.txt
-          echo "2. 安装此 APK" >> build-info.txt
-          echo "3. 打开应用，自动完成初始化" >> build-info.txt
-          
-          cat build-info.txt
-      
-      - name: Upload Build Info
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-info
-          path: build-info.txt
