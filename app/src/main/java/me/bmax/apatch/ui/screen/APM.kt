@@ -92,6 +92,7 @@ import me.bmax.apatch.ui.WebUIActivity
 import me.bmax.apatch.ui.component.ConfirmResult
 import me.bmax.apatch.ui.component.ModuleRemoveButton
 import me.bmax.apatch.ui.component.ModuleStateIndicator
+import me.bmax.apatch.ui.component.ModuleUndoRemoveButton
 import me.bmax.apatch.ui.component.ModuleUpdateButton
 import me.bmax.apatch.ui.component.SearchAppBar
 import me.bmax.apatch.ui.component.WarningCard
@@ -105,6 +106,7 @@ import me.bmax.apatch.util.hasMagisk
 import me.bmax.apatch.util.reboot
 import me.bmax.apatch.util.toggleModule
 import me.bmax.apatch.util.ui.LocalSnackbarHost
+import me.bmax.apatch.util.undoRemoveModule
 import me.bmax.apatch.util.uninstallModule
 import okhttp3.Request
 
@@ -158,7 +160,6 @@ fun APModuleScreen(navigator: DestinationsNavigator) {
             SearchAppBar(
                 searchText = viewModel.search,
                 onSearchTextChange = { viewModel.search = it },
-                scrollBehavior = scrollBehavior,
                 searchBarPlaceHolderText = stringResource(R.string.search_modules)
             )
         },
@@ -246,26 +247,27 @@ private fun getMetaModuleWarningText(
     viewModel: APModuleViewModel,
     context: Context
 ) : String? {
-    val hasSystemModule = viewModel.moduleList.any { module ->
-        SuFile.open("/data/adb/modules/${module.id}/system").exists()
+    val needsMountModule = viewModel.moduleList.any { module ->
+        val moduleDir = "/data/adb/modules/${module.id}"
+
+        // Module requires mounting if it has a system dir and no skip_mount file
+        val hasSystem = SuFile.open("$moduleDir/system").isDirectory
+        val isSkipped = SuFile.open("$moduleDir/skip_mount").isFile
+
+        hasSystem && !isSkipped
     }
 
-    if (!hasSystemModule) return null
+    if (!needsMountModule) return null
 
-    val metaProp = SuFile.open("/data/adb/metamodule/module.prop").exists()
-    val metaRemoved = SuFile.open("/data/adb/metamodule/remove").exists()
-    val metaDisabled = SuFile.open("/data/adb/metamodule/disable").exists()
+    val metaDir = "/data/adb/metamodule"
+    val metaProp = SuFile.open("$metaDir/module.prop").isFile
+    val metaRemoved = SuFile.open("$metaDir/remove").isFile
+    val metaDisabled = SuFile.open("$metaDir/disable").isFile
 
     return when {
-        !metaProp ->
-            context.getString(R.string.no_meta_module_installed)
-
-        metaProp && metaRemoved ->
-            context.getString(R.string.meta_module_removed)
-
-        metaProp && metaDisabled ->
-            context.getString(R.string.meta_module_disabled)
-
+        !metaProp -> context.getString(R.string.no_meta_module_installed)
+        metaRemoved -> context.getString(R.string.meta_module_removed)
+        metaDisabled -> context.getString(R.string.meta_module_disabled)
         else -> null
     }
 }
@@ -275,7 +277,7 @@ private fun getMetaModuleWarningText(
 private fun MetaModuleWarningCard(
     text: String
 ) {
-    var show by remember { mutableStateOf(true) }
+    var show by rememberSaveable { mutableStateOf(true) }
 
     AnimatedVisibility(
         visible = show,
@@ -307,7 +309,9 @@ private fun ModuleList(
     val failedEnable = stringResource(R.string.apm_failed_to_enable)
     val failedDisable = stringResource(R.string.apm_failed_to_disable)
     val failedUninstall = stringResource(R.string.apm_uninstall_failed)
+    val failedUndoUninstall = stringResource(R.string.apm_module_undo_uninstall_failed)
     val successUninstall = stringResource(R.string.apm_uninstall_success)
+    val successUndoUninstall = stringResource(R.string.apm_module_undo_uninstall_success)
     val reboot = stringResource(id = R.string.reboot)
     val rebootToApply = stringResource(id = R.string.apm_reboot_to_apply)
     val moduleStr = stringResource(id = R.string.apm)
@@ -420,6 +424,34 @@ private fun ModuleList(
         }
     }
 
+    suspend fun onUndoModuleUninstall(module: APModuleViewModel.ModuleInfo) {
+        val success = loadingDialog.withLoading {
+            withContext(Dispatchers.IO) {
+                undoRemoveModule(module.id)
+            }
+        }
+
+        if (success) {
+            viewModel.fetchModuleList()
+        }
+        val message = if (success) {
+            successUndoUninstall.format(module.name)
+        } else {
+            failedUndoUninstall.format(module.name)
+        }
+        val actionLabel = if (success) {
+            reboot
+        } else {
+            null
+        }
+        val result = snackBarHost.showSnackbar(
+            message = message, actionLabel = actionLabel, duration = SnackbarDuration.Long
+        )
+        if (result == SnackbarResult.ActionPerformed) {
+            reboot()
+        }
+    }
+
     PullToRefreshBox(
         modifier = modifier,
         onRefresh = { viewModel.fetchModuleList() },
@@ -477,6 +509,9 @@ private fun ModuleList(
                             updateInfo?.zipUrl ?: "",
                             onUninstall = {
                                 scope.launch { onModuleUninstall(module) }
+                            },
+                            onUndoUninstall = {
+                                scope.launch { onUndoModuleUninstall(module) }
                             },
                             onCheckChanged = {
                                 scope.launch {
@@ -536,6 +571,7 @@ private fun ModuleItem(
     isChecked: Boolean,
     updateUrl: String,
     onUninstall: (APModuleViewModel.ModuleInfo) -> Unit,
+    onUndoUninstall: (APModuleViewModel.ModuleInfo) -> Unit,
     onCheckChanged: (Boolean) -> Unit,
     onUpdate: (APModuleViewModel.ModuleInfo) -> Unit,
     onClick: (APModuleViewModel.ModuleInfo) -> Unit,
@@ -679,8 +715,6 @@ private fun ModuleItem(
                         Spacer(modifier = Modifier.width(12.dp))
                     }
 
-                    Spacer(modifier = Modifier.weight(1f))
-
                     if (module.hasActionScript) {
                         FilledTonalButton(
                             onClick = {
@@ -697,7 +731,20 @@ private fun ModuleItem(
 
                         Spacer(modifier = Modifier.width(12.dp))
                     }
-                    ModuleRemoveButton(enabled = !module.remove, onClick = { onUninstall(module) })
+
+                    Spacer(modifier = Modifier.weight(1f))
+
+                    if (!module.remove) {
+                        ModuleRemoveButton(
+                            enabled = true,
+                            onClick = { onUninstall(module) }
+                        )
+                    } else {
+                        ModuleUndoRemoveButton(
+                            enabled = true,
+                            onClick = { onUndoUninstall(module) }
+                        )
+                    }
                 }
             }
 

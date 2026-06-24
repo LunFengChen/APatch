@@ -68,7 +68,7 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         private const val MAGISKPOLICY_BIN_PATH = APATCH_BIN_FOLDER + "magiskpolicy"
         private const val BUSYBOX_BIN_PATH = APATCH_BIN_FOLDER + "busybox"
         private const val RESETPROP_BIN_PATH = APATCH_BIN_FOLDER + "resetprop"
-        private const val MAGISKBOOT_BIN_PATH = APATCH_BIN_FOLDER + "magiskboot"
+        private const val KPTOOLS_BIN_PATH = APATCH_BIN_FOLDER + "kptools"
         const val DEFAULT_SCONTEXT = "u:r:untrusted_app:s0"
         const val MAGISK_SCONTEXT = "u:r:magisk:s0"
 
@@ -137,14 +137,16 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
                 "ln -s $APD_PATH $APD_LINK_PATH",
                 "restorecon $APD_PATH",
 
-                "cp -f ${nativeDir}/libmagiskpolicy.so $MAGISKPOLICY_BIN_PATH",
-                "chmod +x $MAGISKPOLICY_BIN_PATH",
-                "cp -f ${nativeDir}/libresetprop.so $RESETPROP_BIN_PATH",
-                "chmod +x $RESETPROP_BIN_PATH",
+                "rm -f $MAGISKPOLICY_BIN_PATH",
+                "ln -s $APD_PATH $MAGISKPOLICY_BIN_PATH",
+                "rm -f $RESETPROP_BIN_PATH",
+                "ln -s $APD_PATH $RESETPROP_BIN_PATH",
+               
                 "cp -f ${nativeDir}/libbusybox.so $BUSYBOX_BIN_PATH",
                 "chmod +x $BUSYBOX_BIN_PATH",
-                "cp -f ${nativeDir}/libmagiskboot.so $MAGISKBOOT_BIN_PATH",
-                "chmod +x $MAGISKBOOT_BIN_PATH",
+                "cp -f ${nativeDir}/libkptools.so $KPTOOLS_BIN_PATH",
+                "chmod +x $KPTOOLS_BIN_PATH",
+
 
 
                 "touch $PACKAGE_CONFIG_FILE",
@@ -320,9 +322,9 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         // TODO: 2. remove all usage of superkey
         sharedPreferences = getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)
         APatchKeyHelper.setSharedPreferences(sharedPreferences)
-        
-        // Try stored key first, then default key from BuildConfig
-        var storedKey = APatchKeyHelper.readSPSuperKey()
+
+        // Try stored key first, then the ROM/fork default key, then upstream's su fallback.
+        val storedKey = APatchKeyHelper.readSPSuperKey().orEmpty()
         if (storedKey.isNotEmpty()) {
             Log.d(TAG, "Using stored superkey")
             superKey = storedKey
@@ -330,8 +332,8 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
             Log.d(TAG, "Using default superkey from BuildConfig")
             // superKey already set in tryDefaultSuperKey()
         } else {
-            Log.d(TAG, "No valid superkey, user input required")
-            // Will show auth dialog in UI
+            Log.d(TAG, "No valid stored/default superkey, falling back to su")
+            superKey = "su"
         }
 
         okhttpClient =

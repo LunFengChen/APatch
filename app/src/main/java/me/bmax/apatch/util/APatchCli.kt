@@ -80,9 +80,8 @@ fun createRootShell(globalMnt: Boolean = false): Shell {
 private fun createMainRootShell() : Shell {
     val builder = Shell.Builder.create()
         .setInitializers(RootShellInitializer::class.java)
-        .setCommands(SUPERCMD, APApplication.superKey, "-Z", APApplication.MAGISK_SCONTEXT)
     val shell = try {
-        builder.build()
+        builder.build(SUPERCMD, APApplication.superKey, "-Z", APApplication.MAGISK_SCONTEXT)
     } catch (e: Throwable) {
         Log.e(TAG, "su failed: ", e)
         builder.setCommands(getKPatchPath(), APApplication.superKey, "su", "-Z", APApplication.MAGISK_SCONTEXT)
@@ -255,6 +254,13 @@ fun uninstallModule(id: String): Boolean {
     val cmd = "module uninstall $id"
     val result = execApd(cmd,true)
     Log.i(TAG, "uninstall module $id result: $result")
+    return result
+}
+
+fun undoRemoveModule(id: String): Boolean {
+    val cmd = "module undo-uninstall $id"
+    val result = execApd(cmd,true)
+    Log.i(TAG, "undo-uninstall module $id result: $result")
     return result
 }
 

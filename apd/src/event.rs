@@ -1,3 +1,12 @@
+use crate::sepolicy::get_policy_main;
+use anyhow::{Context, Result};
+use libc::SIGPWR;
+use log::{info, warn};
+use notify::{
+    Config, Event, EventKind, INotifyWatcher, RecursiveMode, Watcher,
+    event::{ModifyKind, RenameMode},
+};
+use signal_hook::{consts::signal::*, iterator::Signals};
 use std::{
     env,
     ffi::CStr,
@@ -10,41 +19,48 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Context, Result};
-use libc::SIGPWR;
-use log::{info, warn};
-use notify::{
-    Config, Event, EventKind, INotifyWatcher, RecursiveMode, Watcher,
-    event::{ModifyKind, RenameMode},
-};
-use signal_hook::{consts::signal::*, iterator::Signals};
-
 use crate::{
-    assets, defs, metamodule, module, restorecon, supercall,
-    supercall::{
-        fork_for_result, init_load_package_uid_config, init_load_su_path, refresh_ap_package_list,
-    },
-    utils::{
-        self, switch_cgroups,
-    },
+    assets, defs, lua, metamodule, module, restorecon, supercall,
+    supercall::{init_load_su_path, refresh_ap_package_list},
+    utils::{self, switch_cgroups},
 };
+
+pub fn report_kernel(superkey: Option<String>, event: &str, state: &str) -> Result<()> {
+    let args = vec![
+        superkey.unwrap_or("su".to_string()),
+        "event".to_string(),
+        event.to_string(),
+        state.to_string(),
+    ];
+    let args_ref: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    let _ = utils::run_command("truncate", &args_ref, None)?.wait()?;
+    Ok(())
+}
 
 pub fn on_post_data_fs(superkey: Option<String>) -> Result<()> {
     utils::umask(0);
+    report_kernel(superkey.clone(), "post-fs-data", "before")?;
     use std::process::Stdio;
     #[cfg(unix)]
-    init_load_package_uid_config(&superkey);
-
     init_load_su_path(&superkey);
 
-    let args = ["/data/adb/ap/bin/magiskpolicy", "--magisk", "--live"];
-    fork_for_result("/data/adb/ap/bin/magiskpolicy", &args, &superkey);
+    let mut sepol = get_policy_main(&["magiskpolicy".to_string(), "--live".to_string()])?;
+    sepol.magisk_rules();
+    sepol
+        .to_file("/sys/fs/selinux/load")
+        .context("Cannot apply policy")?;
 
     info!("Re-privilege apd profile after injecting sepolicy");
     supercall::privilege_apd_profile(&superkey);
 
+    // Clear all temporary module configs early
+    if let Err(e) = crate::module_config::clear_all_temp_configs() {
+        warn!("clear temp configs failed: {e}");
+    }
+
     if utils::has_magisk() {
         warn!("Magisk detected, skip post-fs-data!");
+        report_kernel(superkey.clone(), "post-fs-data", "after")?;
         return Ok(());
     }
 
@@ -68,16 +84,17 @@ pub fn on_post_data_fs(superkey: Option<String>) -> Result<()> {
     } else {
         info!("Failed to delete .old files.");
     }
-    let logcat_path = format!("{}locat.log", defs::APATCH_LOG_FOLDER);
+    let logcat_path = format!("{}logcat.log", defs::APATCH_LOG_FOLDER);
     let dmesg_path = format!("{}dmesg.log", defs::APATCH_LOG_FOLDER);
     let bootlog = fs::File::create(dmesg_path)?;
     args = vec![
         "-s",
         "9",
-        "120s",
+        "45s",
         "logcat",
         "-b",
         "main,system,crash",
+        "DrmLibFs:S",
         "-f",
         &logcat_path,
         "logcatcher-bootlog:S",
@@ -173,8 +190,7 @@ pub fn on_post_data_fs(superkey: Option<String>) -> Result<()> {
     if let Err(e) = module::exec_stage_script("post-fs-data", true) {
         warn!("exec post-fs-data scripts failed: {}", e);
     }
-    if let Err(e) = module::exec_stage_lua("post-fs-data", true, superkey.as_deref().unwrap_or(""))
-    {
+    if let Err(e) = lua::exec_stage_lua("post-fs-data", true, superkey.as_deref().unwrap_or("")) {
         warn!("Failed to exec post-fs-data lua: {}", e);
     }
     // load system.prop
@@ -185,10 +201,10 @@ pub fn on_post_data_fs(superkey: Option<String>) -> Result<()> {
     info!("remove update flag");
     let _ = fs::remove_file(module_update_flag);
 
-    run_stage("post-mount", superkey, true);
+    run_stage("post-mount", superkey.clone(), true);
 
     env::set_current_dir("/").with_context(|| "failed to chdir to /")?;
-
+    report_kernel(superkey, "post-fs-data", "after")?;
     Ok(())
 }
 
@@ -219,7 +235,7 @@ fn run_stage(stage: &str, superkey: Option<String>, block: bool) {
     if let Err(e) = module::exec_stage_script(stage, block) {
         warn!("Failed to exec {stage} scripts: {e}");
     }
-    if let Err(e) = module::exec_stage_lua(stage, block, superkey.as_deref().unwrap_or("")) {
+    if let Err(e) = lua::exec_stage_lua(stage, block, superkey.as_deref().unwrap_or("")) {
         warn!("Failed to exec {stage} lua: {e}");
     }
 }
@@ -284,7 +300,7 @@ pub fn start_uid_listener() -> Result<()> {
                 let skey = CStr::from_bytes_with_nul(b"su\0")
                     .expect("[shutdown_listener] CStr::from_bytes_with_nul failed");
                 refresh_ap_package_list(&skey, &mutex_clone);
-                break; // 执行一次后退出线程
+                break;
             }
         });
     }
@@ -316,6 +332,9 @@ pub fn start_uid_listener() -> Result<()> {
             let skey = CStr::from_bytes_with_nul(b"su\0")
                 .expect("[start_uid_listener] CStr::from_bytes_with_nul failed");
             refresh_ap_package_list(&skey, &mutex);
+            report_kernel(None, "uid_listener", "package-list-updated").unwrap_or_else(|e| {
+                warn!("Failed to report kernel about package list update: {e}");
+            });
         } else if !debounce {
             thread::sleep(Duration::from_secs(1));
             debounce = true;

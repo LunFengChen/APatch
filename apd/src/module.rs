@@ -1,3 +1,10 @@
+use crate::sepolicy::get_policy_main;
+use crate::{lua, module_config};
+use anyhow::{Context, Result, anyhow, bail, ensure};
+use const_format::concatcp;
+use is_executable::is_executable;
+use java_properties::PropertiesIter;
+use log::{debug, info, warn};
 #[cfg(unix)]
 use std::os::unix::{prelude::PermissionsExt, process::CommandExt};
 use std::{
@@ -9,13 +16,6 @@ use std::{
     process::Command,
     str::FromStr,
 };
-
-use anyhow::{Context, Result, anyhow, bail, ensure};
-use const_format::concatcp;
-use is_executable::is_executable;
-use java_properties::PropertiesIter;
-use log::{info, warn};
-use mlua::{Function, Lua, Result as LuaResult, Table};
 use zip_extensions::zip_extract_file_to_memory;
 
 #[allow(clippy::wildcard_imports)]
@@ -43,7 +43,7 @@ pub enum ModuleType {
     Updated,
 }
 
-fn exec_install_script(module_file: &str, is_metamodule: bool) -> Result<()> {
+fn exec_install_script(module_file: &str, is_metamodule: bool, module_id: &str) -> Result<()> {
     let realpath = std::fs::canonicalize(module_file)
         .with_context(|| format!("realpath: {module_file} failed"))?;
 
@@ -53,7 +53,7 @@ fn exec_install_script(module_file: &str, is_metamodule: bool) -> Result<()> {
 
     let result = Command::new(assets::BUSYBOX_PATH)
         .args(["sh", "-c", &install_script])
-        .envs(get_common_script_envs())
+        .envs(get_common_script_envs(Some(module_id)))
         .env("OUTFD", "1")
         .env("ZIPFILE", realpath)
         .status()?;
@@ -97,8 +97,8 @@ pub fn handle_updated_modules() -> Result<()> {
 }
 
 /// Get common environment variables for script execution
-pub fn get_common_script_envs() -> Vec<(&'static str, String)> {
-    vec![
+pub fn get_common_script_envs(module_id: Option<&str>) -> Vec<(&'static str, String)> {
+    let mut envs = vec![
         ("ASH_STANDALONE", "1".to_string()),
         ("APATCH", "true".to_string()),
         ("APATCH_VER", defs::VERSION_NAME.to_string()),
@@ -111,7 +111,13 @@ pub fn get_common_script_envs() -> Vec<(&'static str, String)> {
                 defs::BINARY_DIR.trim_end_matches('/')
             ),
         ),
-    ]
+    ];
+
+    if let Some(id) = module_id {
+        envs.push(("AP_MODULE", id.to_string()));
+    }
+
+    envs
 }
 
 // because we use something like A-B update
@@ -184,12 +190,13 @@ pub fn load_sepolicy_rule() -> Result<()> {
         }
 
         info!("load policy: {}", &rule_file.display());
-        Command::new(assets::MAGISKPOLICY_PATH)
-            .arg("--live")
-            .arg("--apply")
-            .arg(&rule_file)
-            .status()
-            .with_context(|| format!("Failed to exec {}", rule_file.display()))?;
+        let mut _sepol = get_policy_main(&[
+            "magiskpolicy".to_string(),
+            "--live".to_string(),
+            "--apply".to_string(),
+            rule_file.display().to_string(),
+        ])?;
+
         Ok(())
     })?;
 
@@ -198,6 +205,26 @@ pub fn load_sepolicy_rule() -> Result<()> {
 
 pub fn exec_script<T: AsRef<Path>>(path: T, wait: bool) -> Result<()> {
     info!("exec {}", path.as_ref().display());
+
+    let is_module_script = path.as_ref().starts_with(defs::MODULE_DIR);
+    // Extract module_id from path if it matches /data/adb/modules/{id}/...
+    let module_id = if is_module_script {
+        path.as_ref()
+            .strip_prefix(defs::MODULE_DIR)
+            .ok()
+            .and_then(|p| p.components().next())
+            .and_then(|c| c.as_os_str().to_str())
+            .map(ToString::to_string)
+    } else {
+        None
+    };
+
+    if is_module_script && module_id.is_none() {
+        debug!(
+            "Failed to extract module_id from script path '{}'. Script will run without AP_MODULE environment variable.",
+            path.as_ref().display()
+        );
+    }
 
     let mut command = &mut Command::new(assets::BUSYBOX_PATH);
     #[cfg(unix)]
@@ -215,18 +242,7 @@ pub fn exec_script<T: AsRef<Path>>(path: T, wait: bool) -> Result<()> {
         .current_dir(path.as_ref().parent().unwrap())
         .arg("sh")
         .arg(path.as_ref())
-        .env("ASH_STANDALONE", "1")
-        .env("APATCH", "true")
-        .env("APATCH_VER", defs::VERSION_NAME)
-        .env("APATCH_VER_CODE", defs::VERSION_CODE)
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                env_var("PATH")?,
-                defs::BINARY_DIR.trim_end_matches('/')
-            ),
-        );
+        .envs(get_common_script_envs(module_id.as_deref()));
 
     let result = if wait {
         command.status().map(|_| ())
@@ -245,12 +261,6 @@ pub fn exec_stage_script(stage: &str, block: bool) -> Result<()> {
 
         exec_script(&script_path, block)
     })?;
-    Ok(())
-}
-
-pub fn exec_stage_lua(stage: &str, wait: bool, superkey: &str) -> Result<()> {
-    let stage_safe = stage.replace('-', "_");
-    run_lua(&superkey, &stage_safe, true, wait).map_err(|e| anyhow::anyhow!("{}", e))?;
     Ok(())
 }
 
@@ -284,13 +294,7 @@ pub fn load_system_prop() -> Result<()> {
         }
         info!("load {} system.prop", module.display());
 
-        // resetprop -n --file system.prop
-        Command::new(assets::RESETPROP_PATH)
-            .arg("-n")
-            .arg("--file")
-            .arg(&system_prop)
-            .status()
-            .with_context(|| format!("Failed to exec {}", system_prop.display()))?;
+        crate::resetprop::load_system_prop_file(&system_prop)?;
 
         Ok(())
     })?;
@@ -330,6 +334,11 @@ pub fn prune_modules() -> Result<()> {
             && let Err(e) = exec_script(uninstaller, true)
         {
             warn!("Failed to exec uninstaller: {e}");
+        }
+
+        // Clear module configs before removing module directory
+        if let Err(e) = module_config::clear_module_configs(module_id) {
+            warn!("Failed to clear configs for {module_id}: {e}");
         }
 
         // Finally remove the module directory
@@ -387,8 +396,20 @@ fn _install_module(zip: &str) -> Result<()> {
     // Check if this module is a metamodule
     let is_metamodule = metamodule::is_metamodule(&module_prop);
 
+    // Check if module needs mounting (has system/ dir and no skip_mount file)
+    let needs_mount = {
+        let zip_file = fs::File::open(&zip_path)?;
+        let archive = zip::ZipArchive::new(zip_file)?;
+        let has_system = archive.file_names().any(|name| name.starts_with("system/"));
+        let has_skip_mount = archive.file_names().any(|name| name == "skip_mount");
+        has_system && !has_skip_mount
+    };
+
     // Check if it's safe to install regular module
-    if !is_metamodule && let Err(is_disabled) = metamodule::check_install_safety() {
+    if !is_metamodule
+        && needs_mount
+        && let Err(is_disabled) = metamodule::check_install_safety()
+    {
         println!("\n❌ Installation Blocked");
         println!("┌────────────────────────────────");
         println!("│ A metamodule with custom installer is active");
@@ -456,7 +477,7 @@ fn _install_module(zip: &str) -> Result<()> {
     archive.extract(&_module_update_dir)?;
 
     println!("- Running module installer");
-    exec_install_script(zip, is_metamodule)?;
+    exec_install_script(zip, is_metamodule, module_id)?;
 
     // set permission and selinux context for $MOD/system
     let module_system_dir = PathBuf::from(module_dir.clone()).join("system");
@@ -528,6 +549,47 @@ pub fn uninstall_module(id: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn _undo_uninstall_module(id: &str, update_dir: &str) -> Result<()> {
+    let dir = Path::new(update_dir);
+    ensure!(dir.exists(), "No module installed");
+
+    let mut found = false;
+    for entry in fs::read_dir(dir)?.flatten() {
+        let path = entry.path();
+        let module_prop = path.join("module.prop");
+        if !module_prop.exists() {
+            continue;
+        }
+
+        let content = fs::read(&module_prop)?;
+        let mut module_id = String::new();
+
+        PropertiesIter::new_with_encoding(Cursor::new(content), encoding_rs::UTF_8).read_into(
+            |k, v| {
+                if k == "id" {
+                    module_id = v;
+                }
+            },
+        )?;
+        if module_id == id {
+            let remove_file = path.join(defs::REMOVE_FILE_NAME);
+            fs::remove_file(remove_file).with_context(|| "Failed to remove removefile.")?;
+            found = true;
+            break;
+        }
+    }
+
+    ensure!(found, "Module not found");
+
+    let _ = mark_module_state(id, defs::REMOVE_FILE_NAME, false);
+    Ok(())
+}
+pub fn undo_uninstall_module(id: &str) -> Result<()> {
+    _undo_uninstall_module(id, defs::MODULE_DIR)?;
+    mark_update()?;
+    Ok(())
+}
+
 /// Read module.prop from the given module path and return as a HashMap
 pub fn read_module_prop(module_path: &Path) -> Result<HashMap<String, String>> {
     let module_prop = module_path.join("module.prop");
@@ -550,152 +612,13 @@ pub fn read_module_prop(module_path: &Path) -> Result<HashMap<String, String>> {
     Ok(prop_map)
 }
 
-pub fn save_text<P: AsRef<Path>>(filename: P, content: &str) -> std::io::Result<()> {
-    let _ = ensure_dir_exists("/data/adb/config");
-    let path = Path::new("/data/adb/config").join(filename);
-    fs::write(path, content)?;
-    Ok(())
-}
-
-pub fn load_text<P: AsRef<Path>>(filename: P) -> std::io::Result<String> {
-    let _ = ensure_dir_exists("/data/adb/config");
-    let path = Path::new("/data/adb/config").join(filename);
-    fs::read_to_string(path)
-}
-
-pub fn load_all_lua_modules(lua: &Lua) -> LuaResult<()> {
-    let modules_dir = Path::new("/data/adb/modules");
-
-    let modules: Table = match lua.globals().get("modules") {
-        Ok(t) => t,
-        Err(_) => {
-            let t = lua.create_table()?;
-            lua.globals().set("modules", t.clone())?;
-            t
-        }
-    };
-
-    if modules_dir.exists() {
-        for entry in
-            fs::read_dir(modules_dir).unwrap_or_else(|_| fs::read_dir("/dev/null").unwrap())
-        {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_dir() {
-                    let id = path.file_name().unwrap().to_string_lossy().to_string();
-                    let package: Table = lua.globals().get("package")?;
-                    let old_cpath: String = package.get("cpath")?;
-                    let new_cpath = format!("{}/?.so;{}", path.to_string_lossy(), old_cpath);
-                    package.set("cpath", new_cpath)?;
-
-                    let lua_file = path.join(format!("{}.lua", id));
-
-                    if lua_file.exists() {
-                        match fs::read_to_string(&lua_file) {
-                            Ok(code) => {
-                                match lua
-                                    .load(&code)
-                                    .set_name(&*lua_file.to_string_lossy())
-                                    .eval::<Table>()
-                                {
-                                    Ok(module) => {
-                                        modules.set(id.clone(), module.clone())?;
-                                    }
-                                    Err(e) => {
-                                        eprintln!(
-                                            "Failed to eval Lua {}: {}",
-                                            lua_file.display(),
-                                            e
-                                        );
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to read Lua {}: {}", lua_file.display(), e);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub fn info_lua(lua: &Lua) -> LuaResult<Function> {
-    lua.create_function(|_, msg: String| {
-        info!("[Lua] {}", msg);
-        Ok(())
-    })
-}
-
-pub fn warn_lua(lua: &Lua) -> LuaResult<Function> {
-    lua.create_function(|_, msg: String| {
-        warn!("[Lua] {}", msg);
-        Ok(())
-    })
-}
-
-pub fn install_module_lua(lua: &Lua) -> LuaResult<Function> {
-    lua.create_function(|_, zip: String| {
-        install_module(&zip)
-            .map_err(|e| mlua::Error::external(format!("install_module failed: {}", e)))
-    })
-}
-pub fn save_text_lua(lua: &Lua) -> LuaResult<Function> {
-    lua.create_function(|_, (filename, content): (String, String)| {
-        save_text(&filename, &content)
-            .map_err(|e| mlua::Error::external(format!("save filed: {}", e)))?;
-        Ok(())
-    })
-}
-pub fn read_text_lua(lua: &Lua) -> LuaResult<Function> {
-    lua.create_function(|_, filename: String| {
-        let content = match load_text(&filename) {
-            Ok(s) => s,
-            Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(mlua::Error::external(format!("read failed: {}", e))),
-        };
-        Ok(content)
-    })
-}
-
-pub fn run_lua(id: &str, function: &str, on_each_module: bool, _wait: bool) -> mlua::Result<()> {
-    let lua = unsafe { Lua::unsafe_new() };
-
-    let func = install_module_lua(&lua)?;
-    lua.globals().set("install_module", func)?;
-    lua.globals().set("info", info_lua(&lua)?)?;
-    lua.globals().set("warn", warn_lua(&lua)?)?;
-    lua.globals().set("setConfig", save_text_lua(&lua)?)?;
-    lua.globals().set("getConfig", read_text_lua(&lua)?)?;
-
-    load_all_lua_modules(&lua)?;
-
-    let modules: mlua::Table = lua.globals().get("modules")?;
-    if on_each_module {
-        for pair in modules.pairs::<String, mlua::Table>() {
-            let (_, module_table) = pair?;
-            if let Ok(func_obj) = module_table.get::<mlua::Function>(function) {
-                func_obj.call::<()>(id)?;
-            }
-        }
-    } else {
-        let module_table: mlua::Table = modules.get(id)?;
-        let func_obj: mlua::Function = module_table.get(function)?;
-        func_obj.call::<()>(())?;
-    }
-
-    Ok(())
-}
 pub fn run_action(id: &str) -> Result<()> {
     let action_script_path = format!("/data/adb/modules/{}/action.sh", id);
     if Path::new(&action_script_path).exists() {
         let _ = exec_script(&action_script_path, true);
     } else {
         //if no action.sh, try to run lua action
-        run_lua(&id, "action", false, true).map_err(|e| anyhow::anyhow!("{}", e))?;
+        lua::run_lua(&id, "action", false, true).map_err(|e| anyhow::anyhow!("{}", e))?;
     }
     Ok(())
 }
@@ -776,6 +699,15 @@ pub fn disable_all_modules() -> Result<()> {
 }
 
 fn _list_modules(path: &str) -> Vec<HashMap<String, String>> {
+    // Load all module configs once to minimize I/O overhead
+    let all_configs = match module_config::get_all_module_configs() {
+        Ok(configs) => configs,
+        Err(e) => {
+            warn!("Failed to load module configs: {e}");
+            HashMap::new()
+        }
+    };
+
     // first check enabled modules
     let dir = fs::read_dir(path);
     let Ok(dir) = dir else {
@@ -798,10 +730,16 @@ fn _list_modules(path: &str) -> Vec<HashMap<String, String>> {
         };
         let mut module_prop_map: HashMap<String, String> = HashMap::new();
         let encoding = encoding_rs::UTF_8;
-        let result =
-            PropertiesIter::new_with_encoding(Cursor::new(content), encoding).read_into(|k, v| {
+
+        if PropertiesIter::new_with_encoding(Cursor::new(content), encoding)
+            .read_into(|k, v| {
                 module_prop_map.insert(k, v);
-            });
+            })
+            .is_err()
+        {
+            warn!("Failed to parse module.prop: {}", module_prop.display());
+            continue;
+        }
 
         if !module_prop_map.contains_key("id") || module_prop_map["id"].is_empty() {
             match entry.file_name().to_str() {
@@ -831,10 +769,16 @@ fn _list_modules(path: &str) -> Vec<HashMap<String, String>> {
         module_prop_map.insert("web".to_owned(), web.to_string());
         module_prop_map.insert("action".to_owned(), action.to_string());
 
-        if result.is_err() {
-            warn!("Failed to parse module.prop: {}", module_prop.display());
-            continue;
+        // Apply module config overrides and extract managed features
+        if let Some(module_id) = module_prop_map.get("id")
+            && let Some(config) = all_configs.get(module_id.as_str())
+        {
+            // Apply override.description
+            if let Some(desc) = config.get("override.description") {
+                module_prop_map.insert("description".to_owned(), desc.clone());
+            }
         }
+
         modules.push(module_prop_map);
     }
 
