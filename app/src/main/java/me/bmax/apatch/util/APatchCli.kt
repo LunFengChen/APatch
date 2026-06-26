@@ -29,31 +29,18 @@ import java.util.zip.ZipFile
 
 private const val TAG = "APatchCli"
 private const val SYSTEM_SU = "/system/bin/su"
-private const val SYSTEM_XU = "/system/bin/xu"
-private const val SYSTEM_XFU = "/system/bin/xfu"
-private const val SYSTEM_KP = "/system/bin/kp"
-private val SYSTEM_SU_CANDIDATES = listOf(SYSTEM_SU, SYSTEM_XU, SYSTEM_XFU, SYSTEM_KP)
 
-private fun systemSuArgs(path: String, globalMnt: Boolean = false): Array<String> {
+private fun systemSuArgs(globalMnt: Boolean = false): Array<String> {
     return if (globalMnt) {
-        arrayOf(path, "-Z", APApplication.MAGISK_SCONTEXT, "--mount-master")
+        arrayOf(SYSTEM_SU, "-Z", APApplication.MAGISK_SCONTEXT, "--mount-master")
     } else {
-        arrayOf(path, "-Z", APApplication.MAGISK_SCONTEXT)
+        arrayOf(SYSTEM_SU, "-Z", APApplication.MAGISK_SCONTEXT)
     }
 }
 
 private fun buildSystemSu(builder: Shell.Builder, globalMnt: Boolean = false): Shell {
-    var lastError: Throwable? = null
-    for (path in SYSTEM_SU_CANDIDATES) {
-        try {
-            Log.e(TAG, "retry system su path: $path")
-            return builder.build(*systemSuArgs(path, globalMnt))
-        } catch (e: Throwable) {
-            lastError = e
-            Log.e(TAG, "retry system su path failed: $path", e)
-        }
-    }
-    throw lastError ?: IllegalStateException("No system su candidate works")
+    Log.e(TAG, "retry system su path: $SYSTEM_SU")
+    return builder.build(*systemSuArgs(globalMnt))
 }
 
 class RootShellInitializer : Shell.Initializer() {
@@ -75,7 +62,7 @@ fun createRootShell(globalMnt: Boolean = false): Shell {
         return try {
             buildSystemSu(builder, globalMnt)
         } catch (e: Throwable) {
-            Log.e(TAG, "retry system su candidates failed: ", e)
+            Log.e(TAG, "retry system su failed: ", e)
             return try {
                 Log.e(TAG, "retry PATH su: ", e)
                 if (globalMnt) {
@@ -101,7 +88,7 @@ private fun createMainRootShell() : Shell {
         try {
             buildSystemSu(builder)
         } catch (e: Throwable) {
-            Log.e(TAG, "retry system su candidates failed: ", e)
+            Log.e(TAG, "retry system su failed: ", e)
             builder.setCommands("su")
             try {
                 builder.build()
@@ -180,7 +167,7 @@ fun tryGetRootShell(): Shell {
         return try {
             buildSystemSu(builder)
         } catch (e: Throwable) {
-            Log.e(TAG, "retry system su candidates failed: ", e)
+            Log.e(TAG, "retry system su failed: ", e)
             return try {
                 Log.e(TAG, "retry PATH su: ", e)
                 builder.build("su")
