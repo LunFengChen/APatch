@@ -32,6 +32,22 @@ apksign {
     keyPasswordProperty = "KEY_PASSWORD"
 }
 
+
+fun projectStringProperty(name: String): String {
+    val value = (project.findProperty(name) as? String).orEmpty()
+    return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+}
+
+fun projectBooleanProperty(name: String, default: Boolean = false): Boolean {
+    val value = (project.findProperty(name) as? String)?.trim()?.lowercase()
+    return when (value) {
+        null, "" -> default
+        "1", "true", "yes", "y", "on" -> true
+        "0", "false", "no", "n", "off" -> false
+        else -> default
+    }
+}
+
 val ccache = System.getenv("PATH")?.split(File.pathSeparator)
     ?.map { File(it, "ccache") }?.firstOrNull { it.exists() }?.absolutePath
 
@@ -120,6 +136,9 @@ android {
             }
         }
         buildConfigField("String", "buildKPV", "\"$kernelPatchVersion\"")
+        buildConfigField("String", "DEFAULT_SUPERKEY", projectStringProperty("DEFAULT_SUPERKEY"))
+        buildConfigField("boolean", "AUTO_INSTALL_APATCH", projectBooleanProperty("AUTO_INSTALL_APATCH").toString())
+        buildConfigField("String", "AUTO_INSTALL_MODULES", projectStringProperty("AUTO_INSTALL_MODULES"))
         base.archivesName = "APatch_${managerVersionCode}_${managerVersionName}_${branchName}"
     }
 
@@ -216,14 +235,14 @@ fun downloadFile(url: String, destFile: File) {
 
 registerDownloadTask(
     taskName = "downloadKpimg",
-    srcUrl = "https://github.com/bmax121/KernelPatch/releases/download/$kernelPatchVersion/kpimg-android",
+    srcUrl = "https://github.com/LunFengChen/KernelPatch/releases/download/$kernelPatchVersion/kpimg-android",
     destPath = "${project.projectDir}/src/main/assets/kpimg",
     project = project
 )
 
 registerDownloadTask(
     taskName = "downloadKptools",
-    srcUrl = "https://github.com/bmax121/KernelPatch/releases/download/$kernelPatchVersion/kptools-android",
+    srcUrl = "https://github.com/LunFengChen/KernelPatch/releases/download/$kernelPatchVersion/kptools-android",
     destPath = "${project.projectDir}/libs/arm64-v8a/libkptools.so",
     project = project
 )

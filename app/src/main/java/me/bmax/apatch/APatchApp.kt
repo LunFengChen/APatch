@@ -71,11 +71,13 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         const val DEFAULT_SCONTEXT = "u:r:untrusted_app:s0"
         const val MAGISK_SCONTEXT = "u:r:magisk:s0"
 
-        private const val DEFAULT_SU_PATH = "/system/bin/kp"
+        private const val DEFAULT_SU_PATH = "/system/bin/su"
         private const val LEGACY_SU_PATH = "/system/bin/su"
 
         const val SP_NAME = "config"
         private const val SHOW_BACKUP_WARN = "show_backup_warning"
+        private const val STORED_SUPER_KEY = "xf_super_key"
+        private const val AUTO_MODULES_INSTALLED_FOR = "xf_auto_modules_installed_for"
         lateinit var sharedPreferences: SharedPreferences
 
         private val logCallback: CallbackList<String?> = object : CallbackList<String?>() {
@@ -125,7 +127,7 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
             _apStateLiveData.value = State.ANDROIDPATCH_INSTALLING
             val nativeDir = apApp.applicationInfo.nativeLibraryDir
 
-            Natives.resetSuPath(LEGACY_SU_PATH)
+            Natives.resetSuPath(DEFAULT_SU_PATH)
 
             val cmds = arrayOf(
                 "mkdir -p $APATCH_BIN_FOLDER",
@@ -133,6 +135,7 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
 
                 "cp -f ${nativeDir}/libapd.so $APD_PATH",
                 "chmod +x $APD_PATH",
+                "rm -f $APD_LINK_PATH",
                 "ln -s $APD_PATH $APD_LINK_PATH",
                 "restorecon $APD_PATH",
 
@@ -149,22 +152,61 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
 
 
                 "touch $PACKAGE_CONFIG_FILE",
-                "touch $SU_PATH_FILE",
-                "[ -s $SU_PATH_FILE ] || echo $LEGACY_SU_PATH > $SU_PATH_FILE",
+                "echo $DEFAULT_SU_PATH > $SU_PATH_FILE",
                 "echo ${Version.getManagerVersion().second} > $APATCH_VERSION_PATH",
                 "restorecon -R $APATCH_FOLDER",
 
-                "${nativeDir}/libmagiskpolicy.so --magisk --live",
+                "[ -x $MAGISKPOLICY_BIN_PATH ] && $MAGISKPOLICY_BIN_PATH --magisk --live || true",
             )
 
             val shell = getRootShell()
             shell.newJob().add(*cmds).to(logCallback, logCallback).exec()
 
             // clear shell cache
-            APatchCli.refresh()
+            runCatching {
+                APatchCli.refresh()
+            }.onFailure {
+                Log.e(TAG, "APatchCli.refresh failed after install", it)
+            }
 
             Log.d(TAG, "APatch installed...")
             _apStateLiveData.postValue(State.ANDROIDPATCH_INSTALLED)
+
+            if (BuildConfig.AUTO_INSTALL_MODULES.isNotEmpty()) {
+                thread {
+                    autoInstallModules(BuildConfig.AUTO_INSTALL_MODULES)
+                }
+            }
+        }
+
+        private fun autoInstallModules(modulePaths: String) {
+            val marker = modulePaths.trim()
+            if (marker.isEmpty()) return
+            if (sharedPreferences.getString(AUTO_MODULES_INSTALLED_FOR, "") == marker) {
+                Log.d(TAG, "Auto modules already installed for current config")
+                return
+            }
+
+            val paths = marker.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            if (paths.isEmpty()) return
+
+            Log.d(TAG, "Auto-installing modules: $paths")
+            val shell = getRootShell()
+            var allOk = true
+            for (path in paths) {
+                val result = shell.newJob()
+                    .add("$APD_LINK_PATH module install $path")
+                    .to(logCallback, logCallback)
+                    .exec()
+                if (!result.isSuccess) {
+                    allOk = false
+                    Log.e(TAG, "Failed to install module: $path")
+                }
+            }
+
+            if (allOk) {
+                sharedPreferences.edit { putString(AUTO_MODULES_INSTALLED_FOR, marker) }
+            }
         }
 
         fun markNeedReboot() {
@@ -177,6 +219,9 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         var superKey: String = ""
             set(value) {
                 field = value
+                if (::sharedPreferences.isInitialized && value != "su") {
+                    sharedPreferences.edit { putString(STORED_SUPER_KEY, value) }
+                }
                 val ready = Natives.nativeReady(value)
                 _kpStateLiveData.value =
                     if (ready) State.KERNELPATCH_INSTALLED else State.UNKNOWN_STATE
@@ -239,6 +284,23 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
                     return@thread
                 }
             }
+
+        private fun trySuperKey(value: String, source: String): Boolean {
+            if (value.isBlank()) return false
+            Log.d(TAG, "Trying $source superkey")
+            return if (Natives.nativeReady(value)) {
+                Log.d(TAG, "$source superkey verified successfully")
+                superKey = value
+                true
+            } else {
+                Log.d(TAG, "$source superkey verification failed")
+                false
+            }
+        }
+
+        fun tryDefaultSuperKey(): Boolean {
+            return trySuperKey(BuildConfig.DEFAULT_SUPERKEY, "default")
+        }
     }
 
     override fun onCreate() {
@@ -268,7 +330,16 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         // TODO: 1. make me root by kernel
         // TODO: 2. remove all usage of superkey
         sharedPreferences = getSharedPreferences(SP_NAME, Context.MODE_PRIVATE)
-        superKey = "su"
+
+        val storedKey = sharedPreferences.getString(STORED_SUPER_KEY, "").orEmpty()
+        if (storedKey.isNotEmpty() && trySuperKey(storedKey, "stored")) {
+            Log.d(TAG, "Using stored superkey")
+        } else if (tryDefaultSuperKey()) {
+            Log.d(TAG, "Using default superkey from BuildConfig")
+        } else {
+            Log.d(TAG, "No valid stored/default superkey, falling back to su")
+            superKey = "su"
+        }
 
         okhttpClient =
             OkHttpClient.Builder().cache(Cache(File(cacheDir, "okhttp"), 10 * 1024 * 1024))

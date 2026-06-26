@@ -28,9 +28,32 @@ import java.util.Properties
 import java.util.zip.ZipFile
 
 private const val TAG = "APatchCli"
+private const val SYSTEM_SU = "/system/bin/su"
+private const val SYSTEM_XU = "/system/bin/xu"
+private const val SYSTEM_XFU = "/system/bin/xfu"
+private const val SYSTEM_KP = "/system/bin/kp"
+private val SYSTEM_SU_CANDIDATES = listOf(SYSTEM_SU, SYSTEM_XU, SYSTEM_XFU, SYSTEM_KP)
 
-private fun getKPatchPath(): String {
-    return apApp.applicationInfo.nativeLibraryDir + File.separator + "libkpatch.so"
+private fun systemSuArgs(path: String, globalMnt: Boolean = false): Array<String> {
+    return if (globalMnt) {
+        arrayOf(path, "-Z", APApplication.MAGISK_SCONTEXT, "--mount-master")
+    } else {
+        arrayOf(path, "-Z", APApplication.MAGISK_SCONTEXT)
+    }
+}
+
+private fun buildSystemSu(builder: Shell.Builder, globalMnt: Boolean = false): Shell {
+    var lastError: Throwable? = null
+    for (path in SYSTEM_SU_CANDIDATES) {
+        try {
+            Log.e(TAG, "retry system su path: $path")
+            return builder.build(*systemSuArgs(path, globalMnt))
+        } catch (e: Throwable) {
+            lastError = e
+            Log.e(TAG, "retry system su path failed: $path", e)
+        }
+    }
+    throw lastError ?: IllegalStateException("No system su candidate works")
 }
 
 class RootShellInitializer : Shell.Initializer() {
@@ -50,27 +73,18 @@ fun createRootShell(globalMnt: Boolean = false): Shell {
     } catch (e: Throwable) {
         Log.e(TAG, "su failed: ", e)
         return try {
-            Log.e(TAG, "retry compat kpatch su")
-            if (globalMnt) {
-                builder.build(
-                    getKPatchPath(), APApplication.superKey, "su", "-Z", APApplication.MAGISK_SCONTEXT, "--mount-master"
-                )
-            }else{
-                builder.build(
-                    getKPatchPath(), APApplication.superKey, "su", "-Z", APApplication.MAGISK_SCONTEXT
-                )
-            }
+            buildSystemSu(builder, globalMnt)
         } catch (e: Throwable) {
-            Log.e(TAG, "retry kpatch su failed: ", e)
+            Log.e(TAG, "retry system su candidates failed: ", e)
             return try {
-                Log.e(TAG, "retry su: ", e)
+                Log.e(TAG, "retry PATH su: ", e)
                 if (globalMnt) {
-                    builder.build("su","-mm")
-                }else{
+                    builder.build("su", "-mm")
+                } else {
                     builder.build("su")
                 }
             } catch (e: Throwable) {
-                Log.e(TAG, "retry su failed: ", e)
+                Log.e(TAG, "retry PATH su failed: ", e)
                 return builder.build("sh")
             }
         }
@@ -84,16 +98,15 @@ private fun createMainRootShell() : Shell {
         builder.build(SUPERCMD, APApplication.superKey, "-Z", APApplication.MAGISK_SCONTEXT)
     } catch (e: Throwable) {
         Log.e(TAG, "su failed: ", e)
-        builder.setCommands(getKPatchPath(), APApplication.superKey, "su", "-Z", APApplication.MAGISK_SCONTEXT)
         try {
-            builder.build()
+            buildSystemSu(builder)
         } catch (e: Throwable) {
-            Log.e(TAG, "retry kpatch su failed: ", e)
+            Log.e(TAG, "retry system su candidates failed: ", e)
             builder.setCommands("su")
             try {
                 builder.build()
             } catch (e: Throwable) {
-                Log.e(TAG, "retry su failed: ", e)
+                Log.e(TAG, "retry PATH su failed: ", e)
                 builder.setCommands("sh")
                 builder.build()
             }
@@ -165,17 +178,14 @@ fun tryGetRootShell(): Shell {
     } catch (e: Throwable) {
         Log.e(TAG, "su failed: ", e)
         return try {
-            Log.e(TAG, "retry compat kpatch su")
-            builder.build(
-                getKPatchPath(), APApplication.superKey, "su", "-Z", APApplication.MAGISK_SCONTEXT
-            )
+            buildSystemSu(builder)
         } catch (e: Throwable) {
-            Log.e(TAG, "retry kpatch su failed: ", e)
+            Log.e(TAG, "retry system su candidates failed: ", e)
             return try {
-                Log.e(TAG, "retry su: ", e)
+                Log.e(TAG, "retry PATH su: ", e)
                 builder.build("su")
             } catch (e: Throwable) {
-                Log.e(TAG, "retry su failed: ", e)
+                Log.e(TAG, "retry PATH su failed: ", e)
                 builder.build("sh")
             }
         }

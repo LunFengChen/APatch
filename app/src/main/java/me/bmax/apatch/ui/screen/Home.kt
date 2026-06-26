@@ -2,6 +2,7 @@ package me.bmax.apatch.ui.screen
 
 import android.os.Build
 import android.system.Os
+import android.util.Log
 import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
@@ -53,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.livedata.observeAsState
@@ -79,6 +81,7 @@ import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import me.bmax.apatch.APApplication
+import me.bmax.apatch.BuildConfig
 import me.bmax.apatch.Natives
 import me.bmax.apatch.R
 import me.bmax.apatch.apApp
@@ -94,6 +97,7 @@ import me.bmax.apatch.util.getSELinuxStatus
 import me.bmax.apatch.util.reboot
 import me.bmax.apatch.util.ui.APDialogBlurBehindUtils
 
+private const val TAG = "HomeScreen"
 private val managerVersion = getManagerVersion()
 
 @Destination<RootGraph>(start = true)
@@ -198,6 +202,12 @@ fun RebootDropdownItem(@StringRes id: Int, reason: String = "") {
 private fun TopBar(
     onInstallClick: () -> Unit, navigator: DestinationsNavigator, kpState: APApplication.State
 ) {
+    LaunchedEffect(kpState) {
+        if (kpState == APApplication.State.UNKNOWN_STATE) {
+            APApplication.tryDefaultSuperKey()
+        }
+    }
+
     val uriHandler = LocalUriHandler.current
     var showDropdownMoreOptions by remember { mutableStateOf(false) }
     var showDropdownReboot by remember { mutableStateOf(false) }
@@ -445,6 +455,16 @@ private fun KStatusCard(
 
 @Composable
 private fun AStatusCard(apState: APApplication.State) {
+    LaunchedEffect(apState) {
+        if (BuildConfig.AUTO_INSTALL_APATCH &&
+            (apState == APApplication.State.ANDROIDPATCH_NOT_INSTALLED ||
+                apState == APApplication.State.ANDROIDPATCH_NEED_UPDATE)
+        ) {
+            Log.d(TAG, "Auto-installing AndroidPatch...")
+            APApplication.installApatch()
+        }
+    }
+
     ElevatedCard(
         colors = CardDefaults.elevatedCardColors(containerColor = run {
             MaterialTheme.colorScheme.secondaryContainer
