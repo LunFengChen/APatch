@@ -14,6 +14,7 @@ import androidx.lifecycle.MutableLiveData
 import com.topjohnwu.superuser.CallbackList
 import me.bmax.apatch.ui.CrashHandleActivity
 import me.bmax.apatch.util.APatchCli
+import me.bmax.apatch.util.PkgConfig
 import me.bmax.apatch.util.Version
 import me.bmax.apatch.util.getRootShell
 import me.bmax.apatch.util.rootShellForResult
@@ -172,9 +173,32 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
             Log.d(TAG, "APatch installed...")
             _apStateLiveData.postValue(State.ANDROIDPATCH_INSTALLED)
 
+            autoGrantRootPackages(BuildConfig.AUTO_GRANT_ROOT_PACKAGES)
+
             if (BuildConfig.AUTO_INSTALL_MODULES.isNotEmpty()) {
                 thread {
                     autoInstallModules(BuildConfig.AUTO_INSTALL_MODULES)
+                }
+            }
+        }
+
+        private fun autoGrantRootPackages(packageCsv: String) {
+            val marker = packageCsv.trim()
+            if (marker.isEmpty()) return
+
+            val packages = marker.split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .distinct()
+            if (packages.isEmpty()) return
+
+            thread {
+                try {
+                    Log.d(TAG, "Auto-granting root packages: $packages")
+                    val applied = PkgConfig.grantRootPackages(apApp.applicationContext, packages)
+                    Log.d(TAG, "Auto root grants result: $applied")
+                } catch (t: Throwable) {
+                    Log.e(TAG, "Auto root grants failed", t)
                 }
             }
         }
@@ -265,6 +289,7 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
 
                     if (Version.installedApdVInt > 0) {
                         _apStateLiveData.postValue(State.ANDROIDPATCH_INSTALLED)
+                        autoGrantRootPackages(BuildConfig.AUTO_GRANT_ROOT_PACKAGES)
                     }
 
                     if (Version.installedApdVInt > 0 && mgv.toInt() != Version.installedApdVInt) {

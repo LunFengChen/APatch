@@ -33,8 +33,8 @@ apksign {
 }
 
 
-fun projectStringProperty(name: String): String {
-    val value = (project.findProperty(name) as? String).orEmpty()
+fun projectStringProperty(name: String, defaultValue: String = ""): String {
+    val value = (project.findProperty(name) as? String) ?: defaultValue
     return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
@@ -139,6 +139,7 @@ android {
         buildConfigField("String", "DEFAULT_SUPERKEY", projectStringProperty("DEFAULT_SUPERKEY"))
         buildConfigField("boolean", "AUTO_INSTALL_APATCH", projectBooleanProperty("AUTO_INSTALL_APATCH").toString())
         buildConfigField("String", "AUTO_INSTALL_MODULES", projectStringProperty("AUTO_INSTALL_MODULES"))
+        buildConfigField("String", "AUTO_GRANT_ROOT_PACKAGES", projectStringProperty("AUTO_GRANT_ROOT_PACKAGES", "com.xiaofeng.rommanager"))
         base.archivesName = "APatch_${managerVersionCode}_${managerVersionName}_${branchName}"
     }
 
