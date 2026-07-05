@@ -47,7 +47,9 @@ object PkgConfig {
         if (file.exists()) {
             file.readLines().drop(1).filter { it.isNotEmpty() }.forEach {
                 Log.d(TAG, it)
-                val p = Config.fromLine(it)
+                val p = runCatching { Config.fromLine(it) }
+                    .onFailure { e -> Log.w(TAG, "skip malformed package_config line: $it", e) }
+                    .getOrNull() ?: return@forEach
                 if (!p.isDefault()) {
                     configs[p.profile.uid] = p
                 }
