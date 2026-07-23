@@ -32,9 +32,9 @@ private const val SYSTEM_SU = "/system/bin/su"
 
 private fun systemSuArgs(globalMnt: Boolean = false): Array<String> {
     return if (globalMnt) {
-        arrayOf(SYSTEM_SU, "-Z", APApplication.MAGISK_SCONTEXT, "--mount-master")
+        arrayOf(SYSTEM_SU, "-M")
     } else {
-        arrayOf(SYSTEM_SU, "-Z", APApplication.MAGISK_SCONTEXT)
+        arrayOf(SYSTEM_SU)
     }
 }
 
@@ -54,15 +54,17 @@ fun createRootShell(globalMnt: Boolean = false): Shell {
     Shell.enableVerboseLogging = BuildConfig.DEBUG
     val builder = Shell.Builder.create().setInitializers(RootShellInitializer::class.java)
     return try {
-        builder.build(
-            SUPERCMD, APApplication.superKey, "-Z", APApplication.MAGISK_SCONTEXT
-        )
+        buildSystemSu(builder, globalMnt)
     } catch (e: Throwable) {
-        Log.e(TAG, "su failed: ", e)
+        Log.e(TAG, "system su failed: ", e)
         return try {
-            buildSystemSu(builder, globalMnt)
+            if (globalMnt) {
+                builder.build(SUPERCMD, APApplication.superKey, "-M")
+            } else {
+                builder.build(SUPERCMD, APApplication.superKey)
+            }
         } catch (e: Throwable) {
-            Log.e(TAG, "retry system su failed: ", e)
+            Log.e(TAG, "supercmd su failed: ", e)
             return try {
                 Log.e(TAG, "retry PATH su: ", e)
                 if (globalMnt) {
@@ -82,13 +84,13 @@ private fun createMainRootShell() : Shell {
     val builder = Shell.Builder.create()
         .setInitializers(RootShellInitializer::class.java)
     val shell = try {
-        builder.build(SUPERCMD, APApplication.superKey, "-Z", APApplication.MAGISK_SCONTEXT)
+        buildSystemSu(builder)
     } catch (e: Throwable) {
-        Log.e(TAG, "su failed: ", e)
+        Log.e(TAG, "system su failed: ", e)
         try {
-            buildSystemSu(builder)
+            builder.build(SUPERCMD, APApplication.superKey)
         } catch (e: Throwable) {
-            Log.e(TAG, "retry system su failed: ", e)
+            Log.e(TAG, "supercmd su failed: ", e)
             builder.setCommands("su")
             try {
                 builder.build()
@@ -159,15 +161,13 @@ fun tryGetRootShell(): Shell {
     Shell.enableVerboseLogging = BuildConfig.DEBUG
     val builder = Shell.Builder.create()
     return try {
-        builder.build(
-            SUPERCMD, APApplication.superKey, "-Z", APApplication.MAGISK_SCONTEXT
-        )
+        buildSystemSu(builder)
     } catch (e: Throwable) {
-        Log.e(TAG, "su failed: ", e)
+        Log.e(TAG, "system su failed: ", e)
         return try {
-            buildSystemSu(builder)
+            builder.build(SUPERCMD, APApplication.superKey)
         } catch (e: Throwable) {
-            Log.e(TAG, "retry system su failed: ", e)
+            Log.e(TAG, "supercmd su failed: ", e)
             return try {
                 Log.e(TAG, "retry PATH su: ", e)
                 builder.build("su")

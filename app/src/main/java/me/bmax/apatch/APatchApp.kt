@@ -184,9 +184,7 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
 
         private fun autoGrantRootPackages(packageCsv: String) {
             val marker = packageCsv.trim()
-            if (marker.isEmpty()) return
-
-            val packages = marker.split(",")
+            val packages = (marker.split(",") + apApp.packageName)
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .distinct()
