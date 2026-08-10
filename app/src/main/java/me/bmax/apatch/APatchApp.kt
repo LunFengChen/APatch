@@ -15,6 +15,7 @@ import com.topjohnwu.superuser.CallbackList
 import me.bmax.apatch.ui.CrashHandleActivity
 import me.bmax.apatch.util.APatchCli
 import me.bmax.apatch.util.PkgConfig
+import me.bmax.apatch.util.APatchKeyHelper
 import me.bmax.apatch.util.Version
 import me.bmax.apatch.util.getRootShell
 import me.bmax.apatch.util.rootShellForResult
@@ -61,6 +62,9 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         const val SAFEMODE_FILE = "/dev/.safemode"
         private const val NEED_REBOOT_FILE = "/dev/.need_reboot"
         const val GLOBAL_NAMESPACE_FILE = "/data/adb/.global_namespace_enable"
+        const val SUCOMPAT_FILE = "/data/adb/ap/sucompat"
+        const val JAILBREAK_FILE = APATCH_FOLDER + "jailbreak"
+        const val JAILBREAK_KO_PATH = APATCH_FOLDER + "kernelpatch.ko"
         const val KPMS_DIR = APATCH_FOLDER + "kpms/"
 
         @Deprecated("Use 'apd -V'")
@@ -324,10 +328,48 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         fun tryDefaultSuperKey(): Boolean {
             return trySuperKey(BuildConfig.DEFAULT_SUPERKEY, "default")
         }
+
+        /**
+         * 上游新增的 SuperKey 解析：默认走 "su"（签名/uid 授权），
+         * 旧内核仍可通过历史 SuperKey 升级；本地 fork 保留 ROM 编译
+         * 的 DEFAULT_SUPERKEY 与 xf_super_key 存储兼容。
+         */
+        private fun resolveSuperKey(): String {
+            APatchKeyHelper.setSharedPreferences(sharedPreferences)
+            val savedKey = APatchKeyHelper.readSPSuperKey()
+
+            if (tryDefaultSuperKey()) {
+                Log.i(TAG, "default BuildConfig superkey accepted")
+                return superKey
+            }
+
+            // Signature authorization (new default).
+            if (Natives.nativeReady("su")) {
+                if (!savedKey.isNullOrEmpty()) {
+                    APatchKeyHelper.clearConfigKey()
+                    Log.i(TAG, "signature auth ready, cleared legacy SuperKey")
+                }
+                return "su"
+            }
+
+            // Legacy kernel patched with a real SuperKey: reuse the stored one.
+            if (!savedKey.isNullOrEmpty() && Natives.nativeReady(savedKey)) {
+                Log.i(TAG, "fallback to legacy stored SuperKey for upgrade")
+                return savedKey
+            }
+
+            return "su"
+        }
     }
 
     override fun onCreate() {
         super.onCreate()
+        // The app-zygote for the jailbreak MagicaService runs without a UserManager,
+        // so shared prefs and other context-dependent setup are unavailable there.
+        // AppZygotePreload drives the jailbreak via JNI directly; skip init here.
+        if (getSystemService(Context.USER_SERVICE) == null) {
+            return
+        }
         apApp = this
 
         val isArm64 = Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }
@@ -358,11 +400,8 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         val storedKey = sharedPreferences.getString(STORED_SUPER_KEY, "").orEmpty()
         if (storedKey.isNotEmpty() && trySuperKey(storedKey, "stored")) {
             Log.d(TAG, "Using stored superkey")
-        } else if (tryDefaultSuperKey()) {
-            Log.d(TAG, "Using default superkey from BuildConfig")
         } else {
-            Log.d(TAG, "No valid stored/default superkey, falling back to su")
-            superKey = "su"
+            superKey = resolveSuperKey()
         }
 
         okhttpClient =
