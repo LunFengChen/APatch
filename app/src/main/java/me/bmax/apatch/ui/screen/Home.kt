@@ -107,6 +107,7 @@ import me.bmax.apatch.util.softReboot
 import me.bmax.apatch.util.ui.APDialogBlurBehindUtils
 
 private const val TAG = "HomeScreen"
+private const val DISMISSED_UPDATE_VERSION_CODE = "dismissed_update_version_code"
 private val managerVersion = getManagerVersion()
 
 @Destination<RootGraph>(start = true)
@@ -812,27 +813,41 @@ fun UpdateCard() {
     val newVersionUrl = newVersion.downloadUrl
     val changelog = newVersion.changelog
 
+    var dismissedVersionCode by rememberSaveable {
+        mutableStateOf(APApplication.sharedPreferences.getInt(DISMISSED_UPDATE_VERSION_CODE, 0))
+    }
     val uriHandler = LocalUriHandler.current
     val title = stringResource(id = R.string.apm_changelog)
     val updateText = stringResource(id = R.string.apm_update)
+    val cancelText = stringResource(id = android.R.string.cancel)
+    val updateDialog = rememberConfirmDialog(
+        onConfirm = { uriHandler.openUri(newVersionUrl) },
+        onDismiss = {
+            if (newVersionCode > 0) {
+                dismissedVersionCode = newVersionCode
+                APApplication.sharedPreferences.edit()
+                    .putInt(DISMISSED_UPDATE_VERSION_CODE, newVersionCode)
+                    .apply()
+            }
+        }
+    )
 
     AnimatedVisibility(
-        visible = newVersionCode > currentVersionCode,
+        visible = newVersionCode > currentVersionCode && dismissedVersionCode != newVersionCode,
         enter = fadeIn() + expandVertically(),
         exit = shrinkVertically() + fadeOut()
     ) {
-        val updateDialog = rememberConfirmDialog(onConfirm = { uriHandler.openUri(newVersionUrl) })
         WarningCard(
             message = stringResource(id = R.string.home_new_apatch_found).format(newVersionCode),
             color = MaterialTheme.colorScheme.outlineVariant,
             onClick = {
-                if (changelog.isEmpty()) {
-                    uriHandler.openUri(newVersionUrl)
-                } else {
-                    updateDialog.showConfirm(
-                        title = title, content = changelog, markdown = true, confirm = updateText
-                    )
-                }
+                updateDialog.showConfirm(
+                    title = title,
+                    content = changelog.ifBlank { newVersionUrl },
+                    markdown = changelog.isNotBlank(),
+                    confirm = updateText,
+                    dismiss = cancelText
+                )
             }
         )
     }

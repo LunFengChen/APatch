@@ -4,8 +4,8 @@ import android.app.Activity.RESULT_OK
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
 import android.util.Patterns
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -340,8 +340,8 @@ private fun ModuleList(
                 runCatching {
                     if (Patterns.WEB_URL.matcher(changelogUrl).matches()) {
                         apApp.okhttpClient.newCall(
-                                Request.Builder().url(changelogUrl).build()
-                            ).execute().use { it.body?.string().orEmpty() }
+                            Request.Builder().url(changelogUrl).build()
+                        ).execute().use { it.body?.string().orEmpty() }
                     } else {
                         changelogUrl
                     }
@@ -349,14 +349,13 @@ private fun ModuleList(
             }
         }
 
-
         if (changelog.isNotEmpty()) {
-            // changelog is not empty, show it and wait for confirm
             val confirmResult = confirmDialog.awaitConfirm(
                 changelogText,
                 content = changelog,
                 markdown = true,
                 confirm = updateText,
+                dismiss = cancel,
             )
 
             if (confirmResult != ConfirmResult.Confirmed) {
