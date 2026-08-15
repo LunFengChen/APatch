@@ -244,6 +244,10 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
 
         var superKey: String = ""
             set(value) {
+                // 同一个 key 重复设置时不再触发后续检查（resolveSuperKey 内部已通过
+                // trySuperKey 设置过一次，外层再赋同值会多起一个检查线程，与前者并发
+                // 进入 Version.getKpImg 导致 check 目录软链 EEXIST 崩溃）
+                if (value.isNotEmpty() && value == field) return
                 field = value
                 if (::sharedPreferences.isInitialized && value != "su") {
                     sharedPreferences.edit { putString(STORED_SUPER_KEY, value) }
@@ -257,11 +261,12 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
                 if (!ready) return
 
                 thread {
-                    val rc = Natives.su(0, null)
-                    if (!rc) {
-                        Log.e(TAG, "Native.su failed")
-                        return@thread
-                    }
+                    try {
+                        val rc = Natives.su(0, null)
+                        if (!rc) {
+                            Log.e(TAG, "Native.su failed")
+                            return@thread
+                        }
 
                     // KernelPatch version
                     //val buildV = Version.buildKPVUInt()
@@ -309,6 +314,10 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
                     Log.d(TAG, "ap state: " + _apStateLiveData.value)
 
                     return@thread
+                    } catch (t: Throwable) {
+                        // 后台检查线程的任何异常都不应让 App 崩溃
+                        Log.e(TAG, "superKey post-check failed", t)
+                    }
                 }
             }
 
