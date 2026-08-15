@@ -287,13 +287,18 @@ val jailbreakKmis = listOf(
     "android14-5.15", "android14-6.1", "android15-6.6", "android16-6.12",
 )
 
+// jailbreak ko 资产自 0.13.3 起才随 KernelPatch release 发布；
+// 本仓库 kernelPatchVersion 固定 0.13.2（配套 LunFengChen/KernelPatch 的 kpimg/kptools），
+// 因此 ko 单独从 0.13.4 拉取（与上游 APatch main 的 pin 一致），否则干净环境构建 404。
+val jailbreakKpVersion = "0.13.4"
+
 tasks.register("downloadJailbreakKo") {
     doLast {
         val assetsDir = File("${project.projectDir}/src/main/assets")
         assetsDir.mkdirs()
         jailbreakKmis.forEach { kmi ->
             val srcUrl =
-                "https://github.com/bmax121/KernelPatch/releases/download/$kernelPatchVersion/${kmi}_kernelpatch.ko"
+                "https://github.com/bmax121/KernelPatch/releases/download/$jailbreakKpVersion/${kmi}_kernelpatch.ko"
             val destFile = File(assetsDir, "${kmi}_kernelpatch.ko")
             if (!destFile.exists()) {
                 println(" - Downloading $srcUrl to ${destFile.absolutePath}")
