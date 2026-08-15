@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.kotlin.compose.compiler) apply false
 }
 
+// fork: 保持 KernelPatch 0.13.2 assets
 project.ext.set("kernelPatchVersion", "0.13.2")
 
 val androidMinSdkVersion by extra(26)

@@ -376,10 +376,10 @@ class PatchesViewModel : ViewModel() {
 
             if (mode == PatchMode.PATCH_AND_INSTALL || mode == PatchMode.INSTALL_TO_NEXT_SLOT) {
 
-                val KPCheck = shell.newJob().add("truncate ${APApplication.superKey} -Z u:r:magisk:s0 -c whoami").exec()
+                val KPCheck = shell.newJob().add("su -c whoami").exec()
 
                 if (KPCheck.isSuccess && !isSuExecutable()) {
-                    patchCommand.addAll(0, listOf("truncate", APApplication.superKey, "-Z", APApplication.MAGISK_SCONTEXT, "-c"))
+                    patchCommand.addAll(0, listOf("su", "-c"))
                     patchCommand.addAll(listOf(superkey, srcBoot.path, "true"))
                 } else {
                     patchCommand = mutableListOf("./busybox", "sh", "boot_patch.sh")

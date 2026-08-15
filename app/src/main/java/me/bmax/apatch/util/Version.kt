@@ -31,6 +31,7 @@ object Version {
         return vi.toUInt()
     }
 
+    @Synchronized
     fun getKpImg(): String {
         var shell: Shell = createRootShell()
         var kimgInfo = mutableStateOf(KPModel.KImgInfo("", false))
@@ -49,6 +50,8 @@ object Version {
 
         for (lib in libs) {
             val name = lib.name.substring(3, lib.name.length - 3)
+            // 幂等：目标可能残留（或并发下已被创建），先删再建，避免 EEXIST 崩溃
+            File("$patchDir/$name").delete()
             Os.symlink(lib.path, "$patchDir/$name")
         }
 

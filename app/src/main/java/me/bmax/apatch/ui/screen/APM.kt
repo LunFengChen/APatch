@@ -4,8 +4,8 @@ import android.app.Activity.RESULT_OK
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.util.Log
 import android.util.Patterns
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -103,6 +103,7 @@ import me.bmax.apatch.ui.viewmodel.APModuleViewModel
 import me.bmax.apatch.util.DownloadListener
 import me.bmax.apatch.util.download
 import me.bmax.apatch.util.hasMagisk
+import me.bmax.apatch.util.isJailbreakMode
 import me.bmax.apatch.util.reboot
 import me.bmax.apatch.util.toggleModule
 import me.bmax.apatch.util.ui.LocalSnackbarHost
@@ -339,8 +340,8 @@ private fun ModuleList(
                 runCatching {
                     if (Patterns.WEB_URL.matcher(changelogUrl).matches()) {
                         apApp.okhttpClient.newCall(
-                                Request.Builder().url(changelogUrl).build()
-                            ).execute().use { it.body?.string().orEmpty() }
+                            Request.Builder().url(changelogUrl).build()
+                        ).execute().use { it.body?.string().orEmpty() }
                     } else {
                         changelogUrl
                     }
@@ -348,14 +349,13 @@ private fun ModuleList(
             }
         }
 
-
         if (changelog.isNotEmpty()) {
-            // changelog is not empty, show it and wait for confirm
             val confirmResult = confirmDialog.awaitConfirm(
                 changelogText,
                 content = changelog,
                 markdown = true,
                 confirm = updateText,
+                dismiss = cancel,
             )
 
             if (confirmResult != ConfirmResult.Confirmed) {
@@ -524,13 +524,17 @@ private fun ModuleList(
                                         isChecked = it
                                         viewModel.fetchModuleList()
 
-                                        val result = snackBarHost.showSnackbar(
-                                            message = rebootToApply,
-                                            actionLabel = reboot,
-                                            duration = SnackbarDuration.Long
-                                        )
-                                        if (result == SnackbarResult.ActionPerformed) {
-                                            reboot()
+                                        // In jailbreak mode a full reboot would unload the
+                                        // runtime-loaded module, so apply without the prompt.
+                                        if (!withContext(Dispatchers.IO) { isJailbreakMode() }) {
+                                            val result = snackBarHost.showSnackbar(
+                                                message = rebootToApply,
+                                                actionLabel = reboot,
+                                                duration = SnackbarDuration.Long
+                                            )
+                                            if (result == SnackbarResult.ActionPerformed) {
+                                                reboot()
+                                            }
                                         }
                                     } else {
                                         val message = if (isChecked) failedDisable else failedEnable

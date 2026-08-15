@@ -33,8 +33,8 @@ apksign {
 }
 
 
-fun projectStringProperty(name: String): String {
-    val value = (project.findProperty(name) as? String).orEmpty()
+fun projectStringProperty(name: String, defaultValue: String = ""): String {
+    val value = (project.findProperty(name) as? String) ?: defaultValue
     return "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 }
 
@@ -139,6 +139,7 @@ android {
         buildConfigField("String", "DEFAULT_SUPERKEY", projectStringProperty("DEFAULT_SUPERKEY"))
         buildConfigField("boolean", "AUTO_INSTALL_APATCH", projectBooleanProperty("AUTO_INSTALL_APATCH").toString())
         buildConfigField("String", "AUTO_INSTALL_MODULES", projectStringProperty("AUTO_INSTALL_MODULES"))
+        buildConfigField("String", "AUTO_GRANT_ROOT_PACKAGES", projectStringProperty("AUTO_GRANT_ROOT_PACKAGES", "com.xiaofeng.rommanager"))
         base.archivesName = "APatch_${managerVersionCode}_${managerVersionName}_${branchName}"
     }
 
@@ -233,6 +234,29 @@ fun downloadFile(url: String, destFile: File) {
     }
 }
 
+/** Download with connect/read timeouts and retries (robust against flaky networks). */
+fun downloadFileRetry(url: String, destFile: File, maxRetries: Int = 5) {
+    var attempt = 0
+    while (true) {
+        try {
+            val conn = URI.create(url).toURL().openConnection()
+            conn.connectTimeout = 15000
+            conn.readTimeout = 60000
+            conn.getInputStream().use { input ->
+                destFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            return
+        } catch (e: Exception) {
+            attempt++
+            if (attempt >= maxRetries) throw e
+            println(" - download attempt $attempt/$maxRetries failed for $url: ${e.message}")
+            Thread.sleep(2000L * attempt)
+        }
+    }
+}
+
 registerDownloadTask(
     taskName = "downloadKpimg",
     srcUrl = "https://github.com/LunFengChen/KernelPatch/releases/download/$kernelPatchVersion/kpimg-android",
@@ -256,6 +280,36 @@ registerDownloadTask(
     project = project
 )
 
+// Jailbreak mode: download KernelPatch ko for every supported kernel KMI and
+// package them into the APK assets so the app can load the matching one.
+val jailbreakKmis = listOf(
+    "android12-5.10", "android13-5.10", "android13-5.15",
+    "android14-5.15", "android14-6.1", "android15-6.6", "android16-6.12",
+)
+
+// jailbreak ko 资产自 0.13.3 起才随 KernelPatch release 发布；
+// 本仓库 kernelPatchVersion 固定 0.13.2（配套 LunFengChen/KernelPatch 的 kpimg/kptools），
+// 因此 ko 单独从 0.13.4 拉取（与上游 APatch main 的 pin 一致），否则干净环境构建 404。
+val jailbreakKpVersion = "0.13.4"
+
+tasks.register("downloadJailbreakKo") {
+    doLast {
+        val assetsDir = File("${project.projectDir}/src/main/assets")
+        assetsDir.mkdirs()
+        jailbreakKmis.forEach { kmi ->
+            val srcUrl =
+                "https://github.com/bmax121/KernelPatch/releases/download/$jailbreakKpVersion/${kmi}_kernelpatch.ko"
+            val destFile = File(assetsDir, "${kmi}_kernelpatch.ko")
+            if (!destFile.exists()) {
+                println(" - Downloading $srcUrl to ${destFile.absolutePath}")
+                downloadFileRetry(srcUrl, destFile)
+            } else {
+                println(" - $kmi kernelpatch.ko already present.")
+            }
+        }
+    }
+}
+
 tasks.register<Copy>("mergeScripts") {
     into("${project.projectDir}/src/main/resources/META-INF/com/google/android")
     from(rootProject.file("${project.rootDir}/scripts/update_binary.sh")) {
@@ -270,6 +324,7 @@ tasks.getByName("preBuild").dependsOn(
     "downloadKpimg",
     "downloadKptools",
     "downloadCompatKpatch",
+    "downloadJailbreakKo",
     "mergeScripts",
 )
 

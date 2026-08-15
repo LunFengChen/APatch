@@ -12,6 +12,7 @@
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name=".APApplication"
@@ -26,6 +27,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.APatch"
         android:usesCleartextTraffic="true"
+        android:zygotePreloadName="me.bmax.apatch.magica.AppZygotePreload"
         tools:targetApi="34">
 
         <activity
@@ -49,6 +51,15 @@
             android:name=".ui.CrashHandleActivity"
             android:exported="false" />
 
+        <receiver
+            android:name=".BootCompletedReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -67,6 +78,28 @@
                 android:name="autoStoreLocales"
                 android:value="true" />
         </service>
+
+        <service
+            android:name=".magica.MagicaService"
+            android:directBootAware="true"
+            android:exported="false"
+            android:isolatedProcess="true"
+            android:useAppZygote="true" />
+
+        <receiver
+            android:name=".magica.BootCompletedReceiver"
+            android:directBootAware="true"
+            android:enabled="false"
+            android:exported="true"
+            android:process=":magica_boot">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="me.bmax.apatch.magica.LAUNCH" />
+            </intent-filter>
+        </receiver>
 
     </application>
 
