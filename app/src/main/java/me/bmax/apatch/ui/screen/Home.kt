@@ -525,9 +525,10 @@ private fun KStatusCard(
 @Composable
 private fun AStatusCard(apState: APApplication.State) {
     LaunchedEffect(apState) {
+        // 只在「未安装」时自动安装（ROM 首刷引导）；「有新版本」仅展示提示卡片，
+        // 由用户自己点 Update，绝不自动执行（自动装会重置 su 路径并替换 apd，属强制行为）
         if (BuildConfig.AUTO_INSTALL_APATCH &&
-            (apState == APApplication.State.ANDROIDPATCH_NOT_INSTALLED ||
-                apState == APApplication.State.ANDROIDPATCH_NEED_UPDATE)
+            apState == APApplication.State.ANDROIDPATCH_NOT_INSTALLED
         ) {
             Log.d(TAG, "Auto-installing AndroidPatch...")
             APApplication.installApatch()
