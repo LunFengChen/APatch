@@ -136,7 +136,9 @@ android {
             }
         }
         buildConfigField("String", "buildKPV", "\"$kernelPatchVersion\"")
-        buildConfigField("String", "DEFAULT_SUPERKEY", projectStringProperty("DEFAULT_SUPERKEY"))
+        // Keep debug and release builds aligned: APatch root in this fork uses the
+        // same default superkey as the boot patch flow unless explicitly overridden.
+        buildConfigField("String", "DEFAULT_SUPERKEY", projectStringProperty("DEFAULT_SUPERKEY", "xiaofeng777"))
         buildConfigField("boolean", "AUTO_INSTALL_APATCH", projectBooleanProperty("AUTO_INSTALL_APATCH").toString())
         buildConfigField("String", "AUTO_INSTALL_MODULES", projectStringProperty("AUTO_INSTALL_MODULES"))
         buildConfigField("String", "AUTO_GRANT_ROOT_PACKAGES", projectStringProperty("AUTO_GRANT_ROOT_PACKAGES", "com.xiaofeng.rommanager"))
