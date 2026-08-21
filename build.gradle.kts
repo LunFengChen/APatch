@@ -4,17 +4,17 @@ plugins {
     alias(libs.plugins.kotlin.compose.compiler) apply false
 }
 
-// fork: 保持 KernelPatch 0.13.2 assets
+// fork: 保持 KernelPatch 0.13.2 assets（配套 LunFengChen/KernelPatch 的 kpimg/kptools）
 project.ext.set("kernelPatchVersion", "0.13.2")
 
-val androidMinSdkVersion by extra(26)
-val androidTargetSdkVersion by extra(36)
-val androidCompileSdkVersion by extra(36)
-val androidBuildToolsVersion by extra("36.1.0")
-val androidCompileNdkVersion by extra("29.0.14206865")
-val managerVersionCode by extra(getVersionCode())
-val managerVersionName by extra(getVersionName())
-val branchName by extra(getBranch())
+extra.set("androidMinSdkVersion", 26)
+extra.set("androidTargetSdkVersion", 36)
+extra.set("androidCompileSdkVersion", 37)
+extra.set("androidBuildToolsVersion", "36.1.0")
+extra.set("androidCompileNdkVersion", "29.0.14206865")
+extra.set("managerVersionCode", getVersionCode())
+extra.set("managerVersionName", getVersionName())
+extra.set("branchName", getBranch())
 fun Project.exec(command: String) = providers.exec {
     commandLine(command.split(" "))
 }.standardOutput.asText.get().trim()
@@ -28,9 +28,19 @@ fun getGitDescribe(): String {
 }
 
 fun getVersionCode(): Int {
-    val commitCount = getGitCommitCount()
-    val major = 1
-    return major * 10000 + commitCount + 200
+    val props = java.util.Properties().apply {
+        File(rootDir, "version.properties").inputStream().use { load(it) }
+    }
+    val epoch = props.getProperty("managerVersionEpoch").toInt()
+    return epoch + getGitCommitCount()
+}
+
+fun getKernelPatchVersion(): String {
+    val header = File(rootDir, "app/src/main/cpp/version").readText()
+    fun part(name: String) = Regex("""#define $name (\d+)""")
+        .find(header)?.groupValues?.get(1)
+        ?: error("$name not found in app/src/main/cpp/version")
+    return "${part("MAJOR")}.${part("MINOR")}.${part("PATCH")}"
 }
 
 fun getBranch(): String {
@@ -43,7 +53,7 @@ fun getVersionName(): String {
 
 tasks.register("printVersion") {
     doLast {
-        println("Version code: $managerVersionCode")
-        println("Version name: $managerVersionName")
+        println("Version code: ${project.extra["managerVersionCode"]}")
+        println("Version name: ${project.extra["managerVersionName"]}")
     }
 }

@@ -1,7 +1,5 @@
 package me.bmax.apatch.util
 
-import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Parcelable
 import android.util.Log
 import androidx.annotation.Keep
@@ -25,10 +23,19 @@ object PkgConfig {
         var pkg: String = "", var exclude: Int = 0, var allow: Int = 0, var profile: Natives.Profile
     ) : Parcelable {
         companion object {
-            fun fromLine(line: String): Config {
-                val sp = line.split(",")
-                val profile = Natives.Profile(sp[3].toInt(), sp[4].toInt(), sp[5])
-                return Config(sp[0], sp[1].toInt(), sp[2].toInt(), profile)
+            fun fromLine(line: String): Config? {
+                val sp = line.split(',', limit = 6)
+                if (sp.size < 6) return null
+                val pkg = sp[0].trim()
+                val exclude = sp[1].trim().toIntOrNull()
+                val allow = sp[2].trim().toIntOrNull()
+                val uid = sp[3].trim().toIntOrNull()
+                val toUid = sp[4].trim().toIntOrNull()
+                val scontext = sp[5].trim()
+                if (pkg.isEmpty() || exclude == null || allow == null ||
+                    uid == null || toUid == null || scontext.isEmpty()
+                ) return null
+                return Config(pkg, exclude, allow, Natives.Profile(uid, toUid, scontext))
             }
         }
 
@@ -45,12 +52,12 @@ object PkgConfig {
         val configs = HashMap<Int, Config>()
         val file = File(APApplication.PACKAGE_CONFIG_FILE)
         if (file.exists()) {
-            file.readLines().drop(1).filter { it.isNotEmpty() }.forEach {
+            file.readLines().filter { it.isNotBlank() }.forEach {
                 Log.d(TAG, it)
-                val p = runCatching { Config.fromLine(it) }
-                    .onFailure { e -> Log.w(TAG, "skip malformed package_config line: $it", e) }
-                    .getOrNull() ?: return@forEach
-                if (!p.isDefault()) {
+                val p = Config.fromLine(it)
+                if (p == null) {
+                    Log.w(TAG, "Skip malformed package_config line: $it")
+                } else if (!p.isDefault()) {
                     configs[p.profile.uid] = p
                 }
             }
@@ -70,44 +77,6 @@ object PkgConfig {
         }
         writer.flush()
         writer.close()
-    }
-
-    fun grantRootPackages(context: Context, packageNames: List<String>): List<String> {
-        val applied = ArrayList<String>()
-        val missing = ArrayList<String>()
-        synchronized(PkgConfig.javaClass) {
-            Natives.su()
-            val configs = readConfigs()
-            for (pkg in packageNames.map { it.trim() }.filter { it.isNotEmpty() }.distinct()) {
-                try {
-                    val appInfo = context.packageManager.getApplicationInfo(pkg, 0)
-                    val uid = appInfo.uid
-                    val config = Config(
-                        pkg = pkg,
-                        exclude = 0,
-                        allow = 1,
-                        profile = Natives.Profile(
-                            uid = uid,
-                            toUid = 0,
-                            scontext = APApplication.MAGISK_SCONTEXT,
-                        )
-                    )
-                    configs[uid] = config
-                    val grantRc = Natives.grantSu(uid, 0, APApplication.MAGISK_SCONTEXT)
-                    val excludeRc = Natives.setUidExclude(uid, 0)
-                    applied.add("$pkg:$uid grant=$grantRc exclude=$excludeRc")
-                } catch (e: PackageManager.NameNotFoundException) {
-                    missing.add(pkg)
-                } catch (t: Throwable) {
-                    Log.e(TAG, "auto grant failed for $pkg", t)
-                    missing.add("$pkg:${t.javaClass.simpleName}")
-                }
-            }
-            writeConfigs(configs)
-        }
-        if (applied.isNotEmpty()) Log.i(TAG, "auto root grants applied: $applied")
-        if (missing.isNotEmpty()) Log.w(TAG, "auto root grant packages missing/failed: $missing")
-        return applied
     }
 
     fun changeConfig(config: Config) {

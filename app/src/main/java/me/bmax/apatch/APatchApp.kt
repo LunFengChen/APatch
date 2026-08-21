@@ -8,7 +8,6 @@ import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
-import androidx.core.net.toUri
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.topjohnwu.superuser.CallbackList
@@ -19,7 +18,6 @@ import me.bmax.apatch.util.APatchKeyHelper
 import me.bmax.apatch.util.Version
 import me.bmax.apatch.util.getRootShell
 import me.bmax.apatch.util.rootShellForResult
-import me.bmax.apatch.util.verifyAppSignature
 import okhttp3.Cache
 import okhttp3.OkHttpClient
 import java.io.File
@@ -63,9 +61,11 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
         private const val NEED_REBOOT_FILE = "/dev/.need_reboot"
         const val GLOBAL_NAMESPACE_FILE = "/data/adb/.global_namespace_enable"
         const val SUCOMPAT_FILE = "/data/adb/ap/sucompat"
+        const val SELINUX_HIDE_FILE = APATCH_FOLDER + "selinux_hide"
         const val JAILBREAK_FILE = APATCH_FOLDER + "jailbreak"
         const val JAILBREAK_KO_PATH = APATCH_FOLDER + "kernelpatch.ko"
-        const val KPMS_DIR = APATCH_FOLDER + "kpms/"
+        /** Persisted, file-backed KPMs. Each module lives in <id>/<id>.kpm. */
+        const val KPMS_DIR = APATCH_FOLDER + "kpm/"
 
         @Deprecated("Use 'apd -V'")
         const val APATCH_VERSION_PATH = APATCH_FOLDER + "version"
@@ -389,6 +389,7 @@ class APApplication : Application(), Thread.UncaughtExceptionHandler {
             exitProcess(0)
         }
 
+        // fork: 防篡改校验（debug 构建与 auto-flash 自动安装构建跳过）
         if (!BuildConfig.DEBUG && !BuildConfig.AUTO_INSTALL_APATCH &&
             !verifyAppSignature("1x2twMoHvfWUODv7KkRRNKBzOfEqJwRKGzJpgaz18xk=")) {
             while (true) {
