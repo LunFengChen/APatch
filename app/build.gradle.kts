@@ -140,7 +140,9 @@ android {
         buildConfigField("boolean", "AUTO_INSTALL_APATCH", projectBooleanProperty("AUTO_INSTALL_APATCH").toString())
         buildConfigField("String", "AUTO_INSTALL_MODULES", projectStringProperty("AUTO_INSTALL_MODULES"))
         buildConfigField("String", "AUTO_GRANT_ROOT_PACKAGES", projectStringProperty("AUTO_GRANT_ROOT_PACKAGES", "com.xiaofeng.rommanager"))
-        base.archivesName = "APatch_${managerVersionCode}_${managerVersionName}_${branchName}"
+        // AGP 9.3+ 不允许 archivesName 含路径分隔符，分支名里的 '/' 替换为 '-'
+        base.archivesName =
+            "APatch_${managerVersionCode}_${managerVersionName}_${branchName.replace('/', '-')}"
     }
 
     compileOptions {

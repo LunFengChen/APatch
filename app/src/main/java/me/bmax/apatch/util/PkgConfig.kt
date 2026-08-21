@@ -1,5 +1,7 @@
 package me.bmax.apatch.util
 
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Parcelable
 import android.util.Log
 import androidx.annotation.Keep
@@ -98,5 +100,44 @@ object PkgConfig {
                 writeConfigs(configs)
             }
         }
+    }
+
+    // fork: ROM 首刷后自动授予 root 权限（配合 AUTO_GRANT_ROOT_PACKAGES 构建参数）
+    fun grantRootPackages(context: Context, packageNames: List<String>): List<String> {
+        val applied = ArrayList<String>()
+        val missing = ArrayList<String>()
+        synchronized(PkgConfig.javaClass) {
+            Natives.su()
+            val configs = readConfigs()
+            for (pkg in packageNames.map { it.trim() }.filter { it.isNotEmpty() }.distinct()) {
+                try {
+                    val appInfo = context.packageManager.getApplicationInfo(pkg, 0)
+                    val uid = appInfo.uid
+                    val config = Config(
+                        pkg = pkg,
+                        exclude = 0,
+                        allow = 1,
+                        profile = Natives.Profile(
+                            uid = uid,
+                            toUid = 0,
+                            scontext = APApplication.MAGISK_SCONTEXT,
+                        )
+                    )
+                    configs[uid] = config
+                    val grantRc = Natives.grantSu(uid, 0, APApplication.MAGISK_SCONTEXT)
+                    val excludeRc = Natives.setUidExclude(uid, 0)
+                    applied.add("$pkg:$uid grant=$grantRc exclude=$excludeRc")
+                } catch (e: PackageManager.NameNotFoundException) {
+                    missing.add(pkg)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "auto grant failed for $pkg", t)
+                    missing.add("$pkg:${t.javaClass.simpleName}")
+                }
+            }
+            writeConfigs(configs)
+        }
+        if (applied.isNotEmpty()) Log.i(TAG, "auto root grants applied: $applied")
+        if (missing.isNotEmpty()) Log.w(TAG, "auto root grant packages missing/failed: $missing")
+        return applied
     }
 }

@@ -8,6 +8,7 @@ import android.os.Build
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.edit
+import androidx.core.net.toUri
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.topjohnwu.superuser.CallbackList
@@ -18,6 +19,7 @@ import me.bmax.apatch.util.APatchKeyHelper
 import me.bmax.apatch.util.Version
 import me.bmax.apatch.util.getRootShell
 import me.bmax.apatch.util.rootShellForResult
+import me.bmax.apatch.util.verifyAppSignature
 import okhttp3.Cache
 import okhttp3.OkHttpClient
 import java.io.File
