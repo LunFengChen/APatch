@@ -81,6 +81,8 @@ import com.topjohnwu.superuser.nio.ExtendedFile
 import com.topjohnwu.superuser.nio.FileSystemManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import me.bmax.apatch.APApplication
 import me.bmax.apatch.Natives
@@ -103,11 +105,15 @@ import me.bmax.apatch.util.ui.APDialogBlurBehindUtils
 import me.bmax.apatch.util.writeTo
 import me.bmax.apatch.util.rootShellForResult
 import java.io.IOException
-import java.io.File
 import java.io.StringReader
 import org.ini4j.Ini
 
 private const val TAG = "KernelPatchModule"
+private val kpmInstallMutex = Mutex()
+private data class UninstallResult(
+    val unloaded: Boolean,
+    val removed: Boolean,
+)
 private lateinit var targetKPMToControl: KPModel.KPMInfo
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -205,10 +211,9 @@ fun KPModuleScreen(navigator: DestinationsNavigator) {
                 if (it.resultCode != RESULT_OK) return@rememberLauncherForActivityResult
                 val uri = it.data?.data ?: return@rememberLauncherForActivityResult
                 scope.launch {
-                    val rc = installKpm(uri)
+                    val rc = kpmInstallMutex.withLock { installKpm(uri) }
                     Toast.makeText(context, if (rc == 0) installSuccessToastText else "$failToastText: $rc", Toast.LENGTH_SHORT).show()
                     viewModel.markNeedRefresh()
-                    viewModel.fetchModuleList()
                 }
             }
 
@@ -298,13 +303,19 @@ suspend fun loadModule(loadingDialog: LoadingDialogHandle, uri: Uri, args: Strin
     return rc
 }
 
-/** Install a KPM and load it immediately. It will also be loaded again at boot. */
+/** Install a KPM from an app-local temporary file; it takes effect after reboot. */
 suspend fun installKpm(uri: Uri): Int = withContext(Dispatchers.IO) {
-    val temp = File(apApp.cacheDir, "kpm-install-${System.currentTimeMillis()}.kpm")
+    val tempDir: ExtendedFile =
+        FileSystemManager.getLocal().getFile(apApp.cacheDir.path, "kpm-install")
+    tempDir.deleteRecursively()
+    tempDir.mkdirs()
+    val rand = (1..4).map { ('a'..'z').random() }.joinToString("")
+    val temp = tempDir.getChildFile("$rand.kpm")
     try {
-        uri.inputStream().use { input -> temp.outputStream().use { input.copyTo(it) } }
+        Log.d(TAG, "save temporary KPM: ${temp.path}")
+        uri.inputStream().buffered().writeTo(temp)
         val infoResult = rootShellForResult(
-            "${APApplication.APATCH_FOLDER}bin/kptools -l -M '${temp.absolutePath}'"
+            "${APApplication.APATCH_FOLDER}bin/kptools -l -M '${temp.path}'"
         )
         if (!infoResult.isSuccess) return@withContext -2
         val section = Ini(StringReader(infoResult.out.joinToString("\n")))["kpm"] ?: return@withContext -3
@@ -314,7 +325,7 @@ suspend fun installKpm(uri: Uri): Int = withContext(Dispatchers.IO) {
         val dir = "${APApplication.KPMS_DIR}$id"
         val destination = "$dir/$id.kpm"
         val result = rootShellForResult(
-            "mkdir -p '$dir' && cp -f '${temp.absolutePath}' '$destination'"
+            "mkdir -p '$dir' && cp -f '${temp.path}' '$destination'"
         )
         if (!result.isSuccess) return@withContext -5
 
@@ -326,7 +337,7 @@ suspend fun installKpm(uri: Uri): Int = withContext(Dispatchers.IO) {
         Log.e(TAG, "install KPM failed", e)
         -1
     } finally {
-        temp.delete()
+        tempDir.deleteRecursively()
     }
 }
 
@@ -482,17 +493,22 @@ private fun KPModuleList(
             return
         }
 
-        val success = loadingDialog.withLoading {
+        val result = loadingDialog.withLoading {
             withContext(Dispatchers.IO) {
                 val unloaded = module.loadSource.isBlank() || Natives.unloadKernelPatchModule(module.name) == 0L
-                if (module.installed && module.loadSource != "embedded") {
+                val removed = if (module.installed && module.loadSource != "embedded") {
                     val id = safeKpmModuleId(module.moduleId.ifBlank { module.name })
-                    rootShellForResult("rm -rf '${APApplication.KPMS_DIR}$id'").isSuccess && (unloaded || module.disabled)
-                } else unloaded
+                    val dir = "${APApplication.KPMS_DIR}$id"
+                    rootShellForResult("rm -rf '$dir' && test ! -e '$dir'").isSuccess
+                } else true
+                UninstallResult(unloaded, removed)
             }
         }
 
-        if (success) {
+        // Refresh even when the live kernel instance could not be unloaded:
+        // the persistent file may still have been removed and must not remain
+        // represented as installed in the UI.
+        if (result.removed) {
             viewModel.fetchModuleList()
         }
     }
